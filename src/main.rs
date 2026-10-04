@@ -148,7 +148,7 @@ async fn run(cli: Cli) -> Result<u8> {
         ))?;
             let client = JevClient::new(&key)?;
             if io::stderr().is_terminal() {
-                if config.c_filter.is_some() {
+                if config.has_source_adapters() {
                     eprintln!("Checking {} source files...", plan.files);
                 } else {
                     eprintln!("Checking {} Rust files...", plan.files);

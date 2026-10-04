@@ -149,7 +149,8 @@
       "type": "string",
       "enum": [
         "rust",
-        "c"
+        "c",
+        "python"
       ]
     },
     "Level": {

@@ -37,6 +37,8 @@ pub struct ConfigFile {
     pub exclude: Option<Vec<String>>,
     /// Version 2 only: explicitly select .c and C-mode .h paths.
     pub c_files: Option<Vec<String>>,
+    /// Version 2 only: explicitly select UTF-8 .py source paths.
+    pub python_files: Option<Vec<String>>,
     #[serde(default)]
     pub rules: Vec<Rule>,
     /// Each file contains one rule or an array of rules.
@@ -106,6 +108,7 @@ pub enum Language {
     #[default]
     Rust,
     C,
+    Python,
 }
 
 impl Selector {
@@ -222,6 +225,7 @@ pub struct Config {
     pub edition: Option<RustEdition>,
     pub filter: FileFilter,
     pub c_filter: Option<FileFilter>,
+    pub python_filter: Option<FileFilter>,
     pub rules: BTreeMap<String, CompiledRule>,
     overrides: Vec<CompiledOverride>,
 }
@@ -234,6 +238,7 @@ struct Merged {
     include: Option<Vec<String>>,
     exclude: Option<Vec<String>>,
     c_files: Option<Vec<String>>,
+    python_files: Option<Vec<String>>,
     rules: BTreeMap<String, Rule>,
     overrides: Vec<Override>,
 }
@@ -307,6 +312,21 @@ impl Config {
             .c_files
             .map(|files| FileFilter::new(&files, &[]))
             .transpose()?;
+        let has_python_rules = rules
+            .values()
+            .any(|rule| rule.definition.r#where.language() == Language::Python);
+        ensure!(
+            has_python_rules == merged.python_files.is_some(),
+            "Python rules and explicit python_files must be configured together"
+        );
+        ensure!(
+            merged.python_files.is_none() || merged.version == 2,
+            "inherited Python configuration requires selected config version 2"
+        );
+        let python_filter = merged
+            .python_files
+            .map(|files| FileFilter::new(&files, &[]))
+            .transpose()?;
         let include = merged.include.unwrap_or_else(|| vec!["**/*.rs".into()]);
         ensure!(
             !include.is_empty(),
@@ -321,10 +341,15 @@ impl Config {
             model: merged.model.unwrap_or_else(|| "jev-latest".into()),
             edition: merged.edition,
             c_filter,
+            python_filter,
             filter: FileFilter::new(&include, &merged.exclude.unwrap_or_default())?,
             rules,
             overrides,
         })
+    }
+
+    pub fn has_source_adapters(&self) -> bool {
+        self.c_filter.is_some() || self.python_filter.is_some()
     }
 
     pub fn setting(&self, path: &Path, rule: &str) -> Option<RuleSetting> {
@@ -358,6 +383,10 @@ fn merge(path: &Path, stack: &mut Vec<PathBuf>, merged: &mut Merged) -> Result<(
         document.version == 2 || document.c_files.is_none(),
         "c_files requires configuration version 2"
     );
+    ensure!(
+        document.version == 2 || document.python_files.is_none(),
+        "python_files requires configuration version 2"
+    );
     let directory = path.parent().context("config has no parent directory")?;
     for base in document.extends {
         let base = directory.join(base);
@@ -385,6 +414,13 @@ fn merge(path: &Path, stack: &mut Vec<PathBuf>, merged: &mut Merged) -> Result<(
             "c_files must contain at least one file pattern"
         );
         merged.c_files = Some(files);
+    }
+    if let Some(files) = document.python_files {
+        ensure!(
+            !files.is_empty(),
+            "python_files must contain at least one file pattern"
+        );
+        merged.python_files = Some(files);
     }
     let mut rules = document.rules;
     for rule_file in document.rule_files {
@@ -431,8 +467,16 @@ fn validate_rule(rule: &Rule) -> Result<()> {
         "C supports only function and file targets"
     );
     ensure!(
-        rule.r#where.kind != TargetKind::Class,
+        rule.r#where.kind != TargetKind::Class || rule.r#where.language() == Language::Python,
         "class targets require the Python adapter"
+    );
+    ensure!(
+        rule.r#where.language() != Language::Python
+            || matches!(
+                rule.r#where.kind,
+                TargetKind::Function | TargetKind::Class | TargetKind::File
+            ),
+        "Python supports only function, class and file targets"
     );
     rule.question.validate()?;
     ensure!(

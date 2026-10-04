@@ -104,3 +104,208 @@ fn preserves_type_parameters_and_match_syntax_without_execution() {
         "[T]"
     );
 }
+
+use common::{Project, response, rule};
+use erislint::{
+    config::Config,
+    runner::{Plan, diagnostics},
+};
+use serde_json::{Value, json};
+
+fn python_rule(id: &str, kind: &str) -> Value {
+    let mut r = rule(id);
+    r["where"] = json!({"language":"python","kind":kind});
+    r
+}
+fn config(rules: Vec<Value>) -> Value {
+    json!({"version":2,"include":["**"],"python_files":["**/*.py"],"rules":rules})
+}
+fn error<T>(r: anyhow::Result<T>) -> String {
+    match r {
+        Ok(_) => panic!("expected failure"),
+        Err(e) => format!("{e:#}"),
+    }
+}
+
+#[test]
+fn requires_explicit_python_selection_and_language_in_version_two() {
+    let p = Project::new();
+    for value in [
+        json!({"version":1,"python_files":null,"rules":[rule("r")]}),
+        json!({"version":1,"python_files":["**/*.py"],"rules":[python_rule("r","function")]}),
+        json!({"version":2,"rules":[python_rule("r","function")]}),
+        json!({"version":2,"python_files":["**/*.py"],"rules":[rule("r")]}),
+        json!({"version":2,"python_files":[],"rules":[python_rule("r","function")]}),
+        config(vec![python_rule("r", "struct")]),
+        json!({"version":1,"rules":[{"id":"r","where":{"kind":"class"}}]}),
+        {
+            let mut r = rule("r");
+            r["where"] = json!({"kind":"class"});
+            json!({"version":2,"rules":[r]})
+        },
+    ] {
+        assert!(
+            Config::load(&p.json("erislint.json", &value)).is_err(),
+            "{value}"
+        );
+    }
+    p.write("sample.py", "def visible(): pass\n");
+    let c = p.config(config(vec![python_rule("r", "class")]));
+    assert!(error(Plan::build(&c, &[])).contains("no supported Python targets"));
+    let c = p.config(json!({"version":2,"edition":"2024","include":["**"],"rules":[rule("r")]}));
+    assert!(error(Plan::build(&c, &[])).contains("no Rust source"));
+}
+
+#[test]
+fn rejects_python_inherited_by_version_one_and_external_legacy_rules() {
+    let p = Project::new();
+    p.json("base.json", &config(vec![python_rule("r", "function")]));
+    assert!(
+        error(Config::load(&p.json(
+            "erislint.json",
+            &json!({"version":1,"extends":["base.json"]})
+        )))
+        .contains("inherited Python")
+    );
+    p.json("rules.json", &python_rule("r", "function"));
+    assert!(
+        Config::load(&p.json(
+            "erislint.json",
+            &json!({"version":1,"rule_files":["rules.json"]})
+        ))
+        .is_err()
+    );
+    let c = p.config(json!({"version":2,"extends":["base.json"]}));
+    let f = p.write("a.py", "def a(): pass\n");
+    assert_eq!(Plan::build(&c, &[f]).unwrap().evaluations.len(), 1);
+}
+
+#[test]
+fn global_scope_precedes_python_selection_but_selected_extensions_fail() {
+    let p = Project::new();
+    p.write("src/good.py", "def good(): pass\n");
+    let other = p.write("src/ignored.cpp", "not Python {");
+    let notes = p.write("src/notes.txt", "bad syntax {");
+    let mut value = config(vec![python_rule("r", "function")]);
+    value["python_files"] = json!(["src/**"]);
+    value["include"] = json!(["src/**/*.py"]);
+    value["exclude"] = json!(["src/ignored.cpp"]);
+    let c = p.config(value.clone());
+    assert_eq!(Plan::build(&c, &[]).unwrap().evaluations.len(), 1);
+    for path in [&other, &notes] {
+        assert!(
+            Plan::from_source(&c, path, "invalid {")
+                .unwrap()
+                .evaluations
+                .is_empty()
+        );
+    }
+    value["include"] = json!(["src/**"]);
+    let c = p.config(value.clone());
+    assert!(error(Plan::build(&c, &[])).contains("unsupported extension"));
+    assert!(error(Plan::from_source(&c, &notes, "invalid")).contains("unsupported extension"));
+    assert!(
+        error(Plan::from_source(&c, &p.root().join("missing.py"), ""))
+            .contains("cannot open input")
+    );
+}
+
+#[test]
+fn overlapping_language_globs_are_rejected_in_disk_and_editor_paths() {
+    let p = Project::new();
+    let path = p.write("sample.py", "def f(): pass\n");
+    let mut c_rule = rule("c");
+    c_rule["where"]["language"] = json!("c");
+    let mut value = config(vec![python_rule("p", "function"), c_rule]);
+    value["c_files"] = json!(["**"]);
+    value["include"] = json!(["**/*.py"]);
+    let c = p.config(value);
+    assert!(error(Plan::build(&c, &[])).contains("both c_files and python_files"));
+    assert!(
+        error(Plan::from_source(&c, &path, "def f(): pass"))
+            .contains("both c_files and python_files")
+    );
+}
+
+#[test]
+fn mixed_language_caches_keep_adapters_across_orders_and_directories() {
+    let p = Project::new();
+    p.write(
+        "Cargo.toml",
+        "[package]\nname='test'\nversion='0.1.0'\nedition='2024'\n",
+    );
+    let mut paths = Vec::new();
+    for dir in ["one", "two"] {
+        paths.push(p.write(&format!("{dir}/a.rs"), "fn rust_fn() {}"));
+        paths.push(p.write(&format!("{dir}/b.c"), "int c_fn(void) { return 1; }"));
+        paths.push(p.write(&format!("{dir}/c.py"), "async def python_fn(): return 1\n"));
+    }
+    let mut c_rule = rule("c");
+    c_rule["where"]["language"] = json!("c");
+    let mut value = config(vec![
+        rule("rust"),
+        c_rule,
+        python_rule("python", "function"),
+    ]);
+    value["c_files"] = json!(["**/*.c"]);
+    let c = p.config(value);
+    let expected = serde_json::to_value(Plan::build(&c, &[]).unwrap()).unwrap();
+    assert_eq!(expected["evaluations"].as_array().unwrap().len(), 6);
+    paths.reverse();
+    paths.push(paths[0].clone());
+    assert_eq!(
+        serde_json::to_value(Plan::build(&c, &paths).unwrap()).unwrap(),
+        expected
+    );
+    for e in expected["evaluations"].as_array().unwrap() {
+        let lang = e["request"]["state"]["language"].as_str().unwrap();
+        let id = if lang == "rust" {
+            "rust"
+        } else if lang == "c" {
+            "c"
+        } else {
+            "python"
+        };
+        assert!(e["request"]["questions"].get(id).is_some());
+    }
+}
+
+#[test]
+fn explicit_filters_and_overrides_skip_python_but_active_missing_targets_fail() {
+    let p = Project::new();
+    let path = p.write("sample.py", "not valid {");
+    let mut r = python_rule("p", "function");
+    r["where"]["exclude"] = json!(["sample.py"]);
+    let c = p.config(config(vec![r]));
+    assert!(Plan::build(&c, &[]).unwrap().evaluations.is_empty());
+    let mut value = config(vec![python_rule("p", "function")]);
+    value["overrides"] = json!([{"files":["**"],"rules":{"p":"off"}}]);
+    let c = p.config(value);
+    assert!(
+        Plan::from_source(&c, &path, "invalid {")
+            .unwrap()
+            .evaluations
+            .is_empty()
+    );
+    let c = p.config(config(vec![python_rule("p", "function")]));
+    assert!(error(Plan::from_source(&c, &path, "x=1\n")).contains("no supported Python targets"));
+}
+
+#[test]
+fn python_editor_snapshots_diagnostics_and_target_selection_share_pipeline() {
+    let p = Project::new();
+    let path = p.write("source.py", "saved = 1\n");
+    p.write("Cargo.toml", "deliberately invalid Cargo manifest");
+    let c = p.config(config(vec![python_rule("p", "function")]));
+    let source = "# 🦀\nclass C:\n    async def café(self): return 1\n";
+    let mut plan = Plan::from_source(&c, &path, source).unwrap();
+    assert_eq!(plan.evaluations.len(), 1);
+    let start = source.find("café").unwrap();
+    plan.select_function(start).unwrap();
+    let report: erislint::jev::Response = serde_json::from_value(response("p", 0.8)).unwrap();
+    let ds = diagnostics(&c, &plan.evaluations[0], report).unwrap();
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].location.span.start, start);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "saved = 1\n");
+    assert_eq!(plan.source(std::path::Path::new("source.py")), Some(source));
+}

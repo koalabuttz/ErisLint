@@ -12,7 +12,7 @@ use ra_ap_syntax::Edition;
 use crate::{
     c,
     config::{Config, Language, RustEdition},
-    rust,
+    python, rust,
     source::{Target, TargetKind},
 };
 
@@ -20,16 +20,34 @@ use crate::{
 pub(crate) enum Adapter {
     Rust,
     C,
+    Python,
 }
 
 impl Adapter {
     pub(crate) fn for_path(path: &Path, config: &Config) -> Result<Option<Self>> {
         let relative = path.strip_prefix(&config.root)?;
-        if config
+        let c_selected = config
             .c_filter
             .as_ref()
-            .is_some_and(|filter| filter.matches(relative))
-        {
+            .is_some_and(|filter| filter.matches(relative));
+        let python_selected = config
+            .python_filter
+            .as_ref()
+            .is_some_and(|filter| filter.matches(relative));
+        ensure!(
+            !(c_selected && python_selected),
+            "path selected by both c_files and python_files: {}",
+            relative.display()
+        );
+        if python_selected {
+            ensure!(
+                path.extension().is_some_and(|ext| ext == "py"),
+                "python_files selected unsupported extension: {} (only .py is supported)",
+                relative.display()
+            );
+            return Ok(Some(Self::Python));
+        }
+        if c_selected {
             ensure!(
                 matches!(
                     path.extension().and_then(|ext| ext.to_str()),
@@ -53,6 +71,7 @@ impl Adapter {
     ) -> Result<PreparedAdapter> {
         match self {
             Self::C => Ok(PreparedAdapter::C),
+            Self::Python => Ok(PreparedAdapter::Python),
             Self::Rust => Ok(PreparedAdapter::Rust(match edition {
                 Some(edition) => edition.into(),
                 None => rust::edition_for(path)?,
@@ -66,6 +85,7 @@ impl Adapter {
 pub(crate) enum PreparedAdapter {
     Rust(Edition),
     C,
+    Python,
 }
 
 impl PreparedAdapter {
@@ -73,6 +93,7 @@ impl PreparedAdapter {
         match self {
             Self::Rust(_) => Language::Rust,
             Self::C => Language::C,
+            Self::Python => Language::Python,
         }
     }
 
@@ -80,6 +101,7 @@ impl PreparedAdapter {
         match self {
             Self::Rust(edition) => rust::extract(source, edition, kinds),
             Self::C => c::extract(source, kinds),
+            Self::Python => python::extract(source, kinds),
         }
     }
 }

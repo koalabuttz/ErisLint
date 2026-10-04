@@ -128,7 +128,7 @@ impl Plan {
         let files = source_files(config, paths)?;
         ensure!(
             !files.is_empty(),
-            if config.c_filter.is_some() {
+            if config.has_source_adapters() {
                 "no configured source files matched the paths"
             } else {
                 "no Rust source files matched the configured paths"
@@ -179,12 +179,12 @@ impl Plan {
                 .components()
                 .any(|part| matches!(part.as_os_str().to_str(), Some("target" | ".git")));
         let mut evaluations = Vec::new();
-        // An out-of-scope snapshot must not be validated as C merely because
-        // c_files is broad. Keep legacy Rust extension/error ordering intact.
-        if included || config.c_filter.is_none() {
+        // An out-of-scope snapshot must not be validated by a source adapter
+        // merely because its file glob is broad. Keep legacy Rust extension/error ordering intact.
+        if included || !config.has_source_adapters() {
             let adapter =
-                Adapter::for_path(&path, config)?.context(if config.c_filter.is_some() {
-                    "editor input must be a configured Rust or C file"
+                Adapter::for_path(&path, config)?.context(if config.has_source_adapters() {
+                    "editor input must be a configured Rust, C or Python file"
                 } else {
                     "editor input must be a Rust file"
                 })?;
@@ -230,13 +230,12 @@ impl Plan {
             .filter(|rule| rule.definition.r#where.language() == adapter.language())
             .map(|rule| rule.definition.r#where.kind)
             .collect();
-        let active_c_rules = adapter.language() == Language::C
-            && config.rules.iter().any(|(id, rule)| {
-                rule.definition.r#where.language() == Language::C
-                    && rule.filter.matches(relative)
-                    && config.setting(relative, id) != Some(RuleSetting::Off)
-            });
-        if adapter.language() == Language::C && !active_c_rules {
+        let active_source_rules = config.rules.iter().any(|(id, rule)| {
+            rule.definition.r#where.language() == adapter.language()
+                && rule.filter.matches(relative)
+                && config.setting(relative, id) != Some(RuleSetting::Off)
+        });
+        if adapter.language() != Language::Rust && !active_source_rules {
             return Ok(Vec::new());
         }
         let mut evaluations = Vec::new();
@@ -281,8 +280,13 @@ impl Plan {
             }
         }
         ensure!(
-            !active_c_rules || !evaluations.is_empty(),
-            "no supported C targets matched active rules for {}; use a file rule for files without matching functions",
+            adapter.language() == Language::Rust || !active_source_rules || !evaluations.is_empty(),
+            "no supported {} targets matched active rules for {}; use a file rule for files without matching functions",
+            if adapter.language() == Language::Python {
+                "Python"
+            } else {
+                "C"
+            },
             relative.display()
         );
         Ok(evaluations)
@@ -435,9 +439,9 @@ fn source_files(config: &Config, paths: &[PathBuf]) -> Result<BTreeMap<PathBuf, 
             if !entry.file_type().is_some_and(|kind| kind.is_file()) {
                 continue;
             }
-            // Global scope takes precedence over broad C-mode selection. The
+            // Global scope takes precedence over broad source adapter selection. The
             // legacy Rust-only discovery path retains its original ordering.
-            if config.c_filter.is_some()
+            if config.has_source_adapters()
                 && !config
                     .filter
                     .matches(entry.path().strip_prefix(&config.root)?)

@@ -70,6 +70,16 @@
         "$ref": "#/$defs/Override"
       }
     },
+    "python_files": {
+      "description": "Version 2 only: explicitly select UTF-8 .py source paths.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
     "rule_files": {
       "description": "Each file contains one rule or an array of rules.",
       "type": "array",
@@ -229,7 +239,8 @@
       "type": "string",
       "enum": [
         "rust",
-        "c"
+        "c",
+        "python"
       ]
     },
     "Level": {
