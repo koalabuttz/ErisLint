@@ -2,6 +2,9 @@
 
 # C milestone checkpoint
 
+This records the initial C milestone. See [review fixes](C-REVIEW-FIXES.md)
+for the subsequent offline regression checkpoint.
+
 The opt-in C milestone is implemented after independent review of the published
 Rust checkpoint `c765486f4a7c437dc91d5fd8d0070a58c573bdf0`. This work stops before
 Python, assembly, new VS Code language activation, or an upstream PR.
