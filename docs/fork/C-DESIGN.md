@@ -24,7 +24,7 @@ config. Version-1 documents reject the new fields even when inherited by v2.
   "c_files": ["src/**/*.c", "include/**/*.h"],
   "rules": [{
     "id": "c-clarity",
-    "where": { "language": "c", "kind": "function", "has_body": true },
+    "where": { "language": "c", "kind": "function" },
     "context": "enclosing",
     "question": {
       "type": "choice",

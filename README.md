@@ -378,6 +378,15 @@ References: [Jev API](https://docs.typesafe.ai/api),
 [confidence](https://docs.typesafe.ai/confidence),
 [Rust syntax library](https://docs.rs/ra_ap_syntax/0.0.349/ra_ap_syntax/).
 
+## Fork-specific additions
+
+This fork preserves the upstream Rust defaults and credit. An opt-in version-2
+configuration adds source-level C function/file inspection, including explicitly
+selected C headers. See the [C example](examples/c/README.md) and
+[C contract and limitations](docs/fork/C-DESIGN.md). Generate the added schemas
+with `--schema config-v2` and `--schema rule-v2`; the original schema commands
+remain version 1. VS Code activation remains Rust-only.
+
 ## License
 
 Copyright (C) 2026 [Eriskii](https://github.com/Eriskii).

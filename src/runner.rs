@@ -16,7 +16,7 @@ use serde::Serialize;
 
 use crate::{
     adapter::{Adapter, PreparedAdapter},
-    config::{Config, InputContext, RuleSetting},
+    config::{Config, InputContext, Language, RuleSetting},
     jev::{ChoiceAnswer, JevClient, Question, Request, Response},
     policy::Level,
     source::{Span, TargetKind},
@@ -128,7 +128,11 @@ impl Plan {
         let files = source_files(config, paths)?;
         ensure!(
             !files.is_empty(),
-            "no Rust source files matched the configured paths"
+            if config.c_filter.is_some() {
+                "no configured source files matched the paths"
+            } else {
+                "no Rust source files matched the configured paths"
+            }
         );
         let mut evaluations = Vec::new();
         let mut parsers = BTreeMap::new();
@@ -170,7 +174,11 @@ impl Plan {
         let relative = path
             .strip_prefix(&config.root)
             .context("input is outside the configuration directory")?;
-        let adapter = Adapter::for_path(&path).context("editor input must be a Rust file")?;
+        let adapter = Adapter::for_path(&path, config)?.context(if config.c_filter.is_some() {
+            "editor input must be a configured Rust or C file"
+        } else {
+            "editor input must be a Rust file"
+        })?;
         let mut evaluations = Vec::new();
         if config.filter.matches(relative)
             && !relative
@@ -214,8 +222,18 @@ impl Plan {
         let kinds = config
             .rules
             .values()
+            .filter(|rule| rule.definition.r#where.language() == adapter.language())
             .map(|rule| rule.definition.r#where.kind)
             .collect();
+        let active_c_rules = adapter.language() == Language::C
+            && config.rules.iter().any(|(id, rule)| {
+                rule.definition.r#where.language() == Language::C
+                    && rule.filter.matches(relative)
+                    && config.setting(relative, id) != Some(RuleSetting::Off)
+            });
+        if adapter.language() == Language::C && !active_c_rules {
+            return Ok(Vec::new());
+        }
         let mut evaluations = Vec::new();
         for target in adapter
             .extract(source, &kinds)
@@ -224,7 +242,8 @@ impl Plan {
             let mut questions_by_context = BTreeMap::<InputContext, BTreeMap<_, _>>::new();
             for (id, rule) in &config.rules {
                 let selector = &rule.definition.r#where;
-                if selector.kind == target.kind
+                if selector.language() == adapter.language()
+                    && selector.kind == target.kind
                     && selector
                         .has_body
                         .is_none_or(|has_body| has_body == target.has_body)
@@ -256,6 +275,11 @@ impl Plan {
                 });
             }
         }
+        ensure!(
+            !active_c_rules || !evaluations.is_empty(),
+            "no supported C targets matched active rules for {}; use a file rule for files without matching functions",
+            relative.display()
+        );
         Ok(evaluations)
     }
 
@@ -407,7 +431,7 @@ fn source_files(config: &Config, paths: &[PathBuf]) -> Result<BTreeMap<PathBuf, 
                 continue;
             }
             // Select before canonicalization, preserving disk discovery order.
-            let Some(adapter) = Adapter::for_path(entry.path()) else {
+            let Some(adapter) = Adapter::for_path(entry.path(), config)? else {
                 continue;
             };
             let path = entry.path().canonicalize()?;

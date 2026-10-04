@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Result, anyhow};
 use clap::{Parser, ValueEnum};
 use erislint::{
-    config::{Config, ConfigFile, RuleFile},
+    config::{Config, ConfigFile, RuleFile, legacy},
     jev::JevClient,
     output::{TextOptions, TextStyle, write_text},
     runner::Plan,
@@ -81,6 +81,8 @@ enum Color {
 enum SchemaKind {
     Config,
     Rule,
+    ConfigV2,
+    RuleV2,
 }
 
 #[tokio::main]
@@ -97,8 +99,10 @@ async fn main() -> ExitCode {
 async fn run(cli: Cli) -> Result<u8> {
     if let Some(kind) = cli.schema {
         let schema = match kind {
-            SchemaKind::Config => schemars::schema_for!(ConfigFile),
-            SchemaKind::Rule => schemars::schema_for!(RuleFile),
+            SchemaKind::Config => schemars::schema_for!(legacy::ConfigFile),
+            SchemaKind::Rule => schemars::schema_for!(legacy::RuleFile),
+            SchemaKind::ConfigV2 => schemars::schema_for!(ConfigFile),
+            SchemaKind::RuleV2 => schemars::schema_for!(RuleFile),
         };
         write_json(&schema)?;
         return Ok(0);
@@ -144,7 +148,11 @@ async fn run(cli: Cli) -> Result<u8> {
         ))?;
             let client = JevClient::new(&key)?;
             if io::stderr().is_terminal() {
-                eprintln!("Checking {} Rust files...", plan.files);
+                if config.c_filter.is_some() {
+                    eprintln!("Checking {} source files...", plan.files);
+                } else {
+                    eprintln!("Checking {} Rust files...", plan.files);
+                }
             }
             plan.run(&config, &client, cli.jobs).await?
         };

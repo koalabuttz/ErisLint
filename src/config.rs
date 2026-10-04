@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{jev::Question, policy::DiagnosticPolicy, source::TargetKind};
 
+pub mod legacy;
+
 const CONFIG_NAME: &str = "erislint.json";
 
 /// Project configuration. File patterns are relative to the selected config's directory.
@@ -33,6 +35,8 @@ pub struct ConfigFile {
     pub edition: Option<RustEdition>,
     pub include: Option<Vec<String>>,
     pub exclude: Option<Vec<String>>,
+    /// Version 2 only: explicitly select .c and C-mode .h paths.
+    pub c_files: Option<Vec<String>>,
     #[serde(default)]
     pub rules: Vec<Rule>,
     /// Each file contains one rule or an array of rules.
@@ -86,12 +90,28 @@ pub struct Rule {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Selector {
+    /// Version 2 only. Omitted language means Rust.
+    pub language: Option<Language>,
     pub kind: TargetKind,
     pub has_body: Option<bool>,
     #[serde(default)]
     pub files: Vec<String>,
     #[serde(default)]
     pub exclude: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Language {
+    #[default]
+    Rust,
+    C,
+}
+
+impl Selector {
+    pub fn language(&self) -> Language {
+        self.language.unwrap_or_default()
+    }
 }
 
 #[derive(
@@ -201,16 +221,19 @@ pub struct Config {
     pub model: String,
     pub edition: Option<RustEdition>,
     pub filter: FileFilter,
+    pub c_filter: Option<FileFilter>,
     pub rules: BTreeMap<String, CompiledRule>,
     overrides: Vec<CompiledOverride>,
 }
 
 #[derive(Default)]
 struct Merged {
+    version: u32,
     model: Option<String>,
     edition: Option<RustEdition>,
     include: Option<Vec<String>>,
     exclude: Option<Vec<String>>,
+    c_files: Option<Vec<String>>,
     rules: BTreeMap<String, Rule>,
     overrides: Vec<Override>,
 }
@@ -269,6 +292,21 @@ impl Config {
                 })
             })
             .collect::<Result<_>>()?;
+        let has_c_rules = rules
+            .values()
+            .any(|rule| rule.definition.r#where.language() == Language::C);
+        ensure!(
+            has_c_rules == merged.c_files.is_some(),
+            "C rules and explicit c_files must be configured together"
+        );
+        ensure!(
+            merged.c_files.is_none() || merged.version == 2,
+            "inherited C configuration requires selected config version 2"
+        );
+        let c_filter = merged
+            .c_files
+            .map(|files| FileFilter::new(&files, &[]))
+            .transpose()?;
         let include = merged.include.unwrap_or_else(|| vec!["**/*.rs".into()]);
         ensure!(
             !include.is_empty(),
@@ -282,6 +320,7 @@ impl Config {
             path,
             model: merged.model.unwrap_or_else(|| "jev-latest".into()),
             edition: merged.edition,
+            c_filter,
             filter: FileFilter::new(&include, &merged.exclude.unwrap_or_default())?,
             rules,
             overrides,
@@ -308,12 +347,16 @@ fn merge(path: &Path, stack: &mut Vec<PathBuf>, merged: &mut Merged) -> Result<(
         path.display()
     );
     stack.push(path.to_path_buf());
-    let document: ConfigFile = read_json(path)?;
+    let document = read_config(path)?;
     ensure!(
-        document.version == 1,
+        matches!(document.version, 1 | 2),
         "unsupported configuration version {} in {}",
         document.version,
         path.display()
+    );
+    ensure!(
+        document.version == 2 || document.c_files.is_none(),
+        "c_files requires configuration version 2"
     );
     let directory = path.parent().context("config has no parent directory")?;
     for base in document.extends {
@@ -336,12 +379,23 @@ fn merge(path: &Path, stack: &mut Vec<PathBuf>, merged: &mut Merged) -> Result<(
     if let Some(exclude) = document.exclude {
         merged.exclude = Some(exclude);
     }
+    if let Some(files) = document.c_files {
+        ensure!(
+            !files.is_empty(),
+            "c_files must contain at least one file pattern"
+        );
+        merged.c_files = Some(files);
+    }
     let mut rules = document.rules;
     for rule_file in document.rule_files {
-        rules.extend(read_json::<RuleFile>(&directory.join(rule_file))?.into_rules());
+        rules.extend(read_rule_file(&directory.join(rule_file), document.version)?.into_rules());
     }
     let mut ids = BTreeSet::new();
     for rule in rules {
+        ensure!(
+            document.version == 2 || rule.r#where.language.is_none(),
+            "rule language requires configuration version 2"
+        );
         ensure!(
             ids.insert(rule.id.clone()),
             "duplicate rule {:?} in {}",
@@ -353,6 +407,7 @@ fn merge(path: &Path, stack: &mut Vec<PathBuf>, merged: &mut Merged) -> Result<(
         merged.rules.insert(rule.id.clone(), rule);
     }
     merged.overrides.extend(document.overrides);
+    merged.version = document.version;
     stack.pop();
     Ok(())
 }
@@ -369,6 +424,11 @@ fn validate_rule(rule: &Rule) -> Result<()> {
     ensure!(
         rule.r#where.has_body.is_none() || rule.r#where.kind == TargetKind::Function,
         "has_body is only valid for function targets"
+    );
+    ensure!(
+        rule.r#where.language() != Language::C
+            || matches!(rule.r#where.kind, TargetKind::Function | TargetKind::File),
+        "C supports only function and file targets"
     );
     rule.question.validate()?;
     ensure!(
@@ -389,4 +449,36 @@ pub fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
     let text =
         fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     serde_json::from_str(&text).with_context(|| format!("invalid JSON in {}", path.display()))
+}
+
+fn read_config(path: &Path) -> Result<ConfigFile> {
+    let text =
+        fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let document: ConfigFile = serde_json::from_str(&text)
+        .with_context(|| format!("invalid JSON in {}", path.display()))?;
+    if document.version == 1 {
+        serde_json::from_str::<legacy::ConfigFile>(&text).with_context(|| {
+            format!(
+                "invalid version-1 JSON in {} (new fields require version 2)",
+                path.display()
+            )
+        })?;
+    }
+    Ok(document)
+}
+
+fn read_rule_file(path: &Path, version: u32) -> Result<RuleFile> {
+    let text =
+        fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let rules = serde_json::from_str(&text)
+        .with_context(|| format!("invalid JSON in {}", path.display()))?;
+    if version == 1 {
+        serde_json::from_str::<legacy::RuleFile>(&text).with_context(|| {
+            format!(
+                "invalid version-1 rule JSON in {} (new fields require version 2)",
+                path.display()
+            )
+        })?;
+    }
+    Ok(rules)
 }
