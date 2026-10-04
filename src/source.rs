@@ -23,6 +23,7 @@ pub enum TargetKind {
     Module,
     File,
     Class,
+    AssemblyRegion,
 }
 
 /// Byte offsets are zero-based, end-exclusive. Lines and Unicode columns are one-based.

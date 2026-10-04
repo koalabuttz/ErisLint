@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{jev::Question, policy::DiagnosticPolicy, source::TargetKind};
 
+pub mod assembly;
 pub mod legacy;
 pub mod v2;
 
@@ -40,13 +41,27 @@ pub struct ConfigFile {
     pub c_files: Option<Vec<String>>,
     /// Version 2 only: explicitly select UTF-8 .py source paths.
     pub python_files: Option<Vec<String>>,
+    pub assembly_sources: Option<Vec<assembly::Source>>,
     #[serde(default)]
     pub rules: Vec<Rule>,
     /// Each file contains one rule or an array of rules.
     #[serde(default)]
-    pub rule_files: Vec<PathBuf>,
+    pub rule_files: Vec<RuleImport>,
     #[serde(default)]
     pub overrides: Vec<Override>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum RuleImport {
+    Path(PathBuf),
+    Versioned(VersionedImport),
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VersionedImport {
+    pub path: PathBuf,
+    pub version: u32,
 }
 
 fn version() -> u32 {
@@ -95,6 +110,7 @@ pub struct Rule {
 pub struct Selector {
     /// Version 2 only. Omitted language means Rust.
     pub language: Option<Language>,
+    pub profile: Option<assembly::Profile>,
     pub kind: TargetKind,
     pub has_body: Option<bool>,
     #[serde(default)]
@@ -110,6 +126,7 @@ pub enum Language {
     Rust,
     C,
     Python,
+    Assembly,
 }
 
 impl Selector {
@@ -212,6 +229,13 @@ fn globs(patterns: &[String]) -> Result<GlobSet> {
 pub struct CompiledRule {
     pub definition: Rule,
     pub filter: FileFilter,
+    pub origin: RuleOrigin,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuleOrigin {
+    pub path: PathBuf,
+    pub version: u32,
 }
 
 struct CompiledOverride {
@@ -227,6 +251,7 @@ pub struct Config {
     pub filter: FileFilter,
     pub c_filter: Option<FileFilter>,
     pub python_filter: Option<FileFilter>,
+    pub assembly_sources: Vec<assembly::CompiledSource>,
     pub rules: BTreeMap<String, CompiledRule>,
     overrides: Vec<CompiledOverride>,
 }
@@ -240,6 +265,8 @@ struct Merged {
     exclude: Option<Vec<String>>,
     c_files: Option<Vec<String>>,
     python_files: Option<Vec<String>>,
+    assembly_sources: Option<Vec<assembly::Source>>,
+    origins: BTreeMap<String, RuleOrigin>,
     rules: BTreeMap<String, Rule>,
     overrides: Vec<Override>,
 }
@@ -274,7 +301,18 @@ impl Config {
                 let filter =
                     FileFilter::new(&definition.r#where.files, &definition.r#where.exclude)
                         .with_context(|| format!("rule {id:?}"))?;
-                Ok((id, CompiledRule { definition, filter }))
+                let origin = merged
+                    .origins
+                    .remove(&id)
+                    .context("rule provenance missing")?;
+                Ok((
+                    id,
+                    CompiledRule {
+                        definition,
+                        filter,
+                        origin,
+                    },
+                ))
             })
             .collect::<Result<_>>()?;
         ensure!(!rules.is_empty(), "configuration contains no rules");
@@ -306,7 +344,7 @@ impl Config {
             "C rules and explicit c_files must be configured together"
         );
         ensure!(
-            merged.c_files.is_none() || merged.version == 2,
+            merged.c_files.is_none() || matches!(merged.version, 2 | 3),
             "inherited C configuration requires selected config version 2"
         );
         let c_filter = merged
@@ -321,13 +359,39 @@ impl Config {
             "Python rules and explicit python_files must be configured together"
         );
         ensure!(
-            merged.python_files.is_none() || merged.version == 2,
+            merged.python_files.is_none() || matches!(merged.version, 2 | 3),
             "inherited Python configuration requires selected config version 2"
         );
         let python_filter = merged
             .python_files
             .map(|files| FileFilter::new(&files, &[]))
             .transpose()?;
+        let assembly_sources = merged
+            .assembly_sources
+            .unwrap_or_default()
+            .into_iter()
+            .map(assembly::Source::compile)
+            .collect::<Result<Vec<_>>>()?;
+        for rule in rules
+            .values()
+            .filter(|r| r.definition.r#where.language() == Language::Assembly)
+        {
+            ensure!(
+                assembly_sources
+                    .iter()
+                    .any(|source| Some(source.options.profile) == rule.definition.r#where.profile),
+                "assembly rules and explicit profile sources must be configured together"
+            );
+        }
+        for source in &assembly_sources {
+            ensure!(
+                rules
+                    .values()
+                    .any(|r| r.definition.r#where.language() == Language::Assembly
+                        && r.definition.r#where.profile == Some(source.options.profile)),
+                "assembly sources require matching profile rules"
+            );
+        }
         let include = merged.include.unwrap_or_else(|| vec!["**/*.rs".into()]);
         ensure!(
             !include.is_empty(),
@@ -343,6 +407,7 @@ impl Config {
             edition: merged.edition,
             c_filter,
             python_filter,
+            assembly_sources,
             filter: FileFilter::new(&include, &merged.exclude.unwrap_or_default())?,
             rules,
             overrides,
@@ -350,7 +415,7 @@ impl Config {
     }
 
     pub fn has_source_adapters(&self) -> bool {
-        self.c_filter.is_some() || self.python_filter.is_some()
+        self.c_filter.is_some() || self.python_filter.is_some() || !self.assembly_sources.is_empty()
     }
 
     pub fn setting(&self, path: &Path, rule: &str) -> Option<RuleSetting> {
@@ -375,17 +440,17 @@ fn merge(path: &Path, stack: &mut Vec<PathBuf>, merged: &mut Merged) -> Result<(
     stack.push(path.to_path_buf());
     let document = read_config(path)?;
     ensure!(
-        matches!(document.version, 1 | 2),
+        matches!(document.version, 1..=3),
         "unsupported configuration version {} in {}",
         document.version,
         path.display()
     );
     ensure!(
-        document.version == 2 || document.c_files.is_none(),
+        matches!(document.version, 2 | 3) || document.c_files.is_none(),
         "c_files requires configuration version 2"
     );
     ensure!(
-        document.version == 2 || document.python_files.is_none(),
+        matches!(document.version, 2 | 3) || document.python_files.is_none(),
         "python_files requires configuration version 2"
     );
     let directory = path.parent().context("config has no parent directory")?;
@@ -394,6 +459,11 @@ fn merge(path: &Path, stack: &mut Vec<PathBuf>, merged: &mut Merged) -> Result<(
         let base = base
             .canonicalize()
             .with_context(|| format!("cannot open extended config {}", base.display()))?;
+        let base_version = read_config(&base)?.version;
+        ensure!(
+            document.version == 3 || base_version != 3,
+            "version-1/2 configurations cannot extend version 3"
+        );
         merge(&base, stack, merged)?;
     }
     if let Some(model) = document.model {
@@ -423,14 +493,59 @@ fn merge(path: &Path, stack: &mut Vec<PathBuf>, merged: &mut Merged) -> Result<(
         );
         merged.python_files = Some(files);
     }
-    let mut rules = document.rules;
+    if let Some(sources) = document.assembly_sources {
+        ensure!(document.version == 3, "assembly_sources requires version 3");
+        ensure!(!sources.is_empty(), "assembly_sources must not be empty");
+        merged.assembly_sources = Some(sources);
+    }
+    let mut rules: Vec<_> = document
+        .rules
+        .into_iter()
+        .map(|rule| {
+            (
+                rule,
+                RuleOrigin {
+                    path: path.to_path_buf(),
+                    version: document.version,
+                },
+            )
+        })
+        .collect();
     for rule_file in document.rule_files {
-        rules.extend(read_rule_file(&directory.join(rule_file), document.version)?.into_rules());
+        let (relative, version) = match rule_file {
+            RuleImport::Path(path) => (path, document.version),
+            RuleImport::Versioned(import) => {
+                ensure!(
+                    document.version == 3,
+                    "versioned rule imports require version 3"
+                );
+                (import.path, import.version)
+            }
+        };
+        ensure!(
+            matches!(version, 1..=3),
+            "unsupported rule-file version {version}"
+        );
+        let path = directory.join(relative);
+        rules.extend(
+            read_rule_file(&path, version)?
+                .into_rules()
+                .into_iter()
+                .map(|rule| {
+                    (
+                        rule,
+                        RuleOrigin {
+                            path: path.clone(),
+                            version,
+                        },
+                    )
+                }),
+        );
     }
     let mut ids = BTreeSet::new();
-    for rule in rules {
+    for (rule, origin) in rules {
         ensure!(
-            document.version == 2 || rule.r#where.language.is_none(),
+            matches!(document.version, 2 | 3) || rule.r#where.language.is_none(),
             "rule language requires configuration version 2"
         );
         ensure!(
@@ -441,6 +556,7 @@ fn merge(path: &Path, stack: &mut Vec<PathBuf>, merged: &mut Merged) -> Result<(
         );
         validate_rule(&rule)
             .with_context(|| format!("invalid rule {:?} in {}", rule.id, path.display()))?;
+        merged.origins.insert(rule.id.clone(), origin);
         merged.rules.insert(rule.id.clone(), rule);
     }
     merged.overrides.extend(document.overrides);
@@ -479,6 +595,26 @@ fn validate_rule(rule: &Rule) -> Result<()> {
             ),
         "Python supports only function, class and file targets"
     );
+    ensure!(
+        rule.r#where.kind != TargetKind::AssemblyRegion
+            || rule.r#where.language() == Language::Assembly,
+        "assembly_region targets require assembly language"
+    );
+    if rule.r#where.language() == Language::Assembly {
+        ensure!(
+            matches!(
+                rule.r#where.kind,
+                TargetKind::File | TargetKind::AssemblyRegion
+            ),
+            "assembly supports only file and assembly_region targets"
+        );
+        assembly::validate_rule(rule)?;
+    } else {
+        ensure!(
+            rule.r#where.profile.is_none(),
+            "profile is only valid for assembly rules"
+        );
+    }
     rule.question.validate()?;
     ensure!(
         !rule.diagnostics.is_empty(),
@@ -503,6 +639,15 @@ pub fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
 fn read_config(path: &Path) -> Result<ConfigFile> {
     let text =
         fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let raw: serde_json::Value = serde_json::from_str(&text)
+        .with_context(|| format!("invalid JSON in {}", path.display()))?;
+    if matches!(
+        raw.get("version").and_then(|v| v.as_u64()).unwrap_or(1),
+        1 | 2
+    ) {
+        serde_json::from_str::<v2::ConfigFile>(&text)
+            .with_context(|| format!("invalid JSON in {}", path.display()))?;
+    }
     let document: ConfigFile = serde_json::from_str(&text)
         .with_context(|| format!("invalid JSON in {}", path.display()))?;
     if document.version == 1 {
@@ -519,6 +664,10 @@ fn read_config(path: &Path) -> Result<ConfigFile> {
 fn read_rule_file(path: &Path, version: u32) -> Result<RuleFile> {
     let text =
         fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    if matches!(version, 1 | 2) {
+        serde_json::from_str::<v2::RuleFile>(&text)
+            .with_context(|| format!("invalid JSON in {}", path.display()))?;
+    }
     let rules = serde_json::from_str(&text)
         .with_context(|| format!("invalid JSON in {}", path.display()))?;
     if version == 1 {

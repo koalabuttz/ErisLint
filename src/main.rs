@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Result, anyhow};
 use clap::{Parser, ValueEnum};
 use erislint::{
-    config::{Config, legacy, v2},
+    config::{Config, ConfigFile, RuleFile, legacy, v2},
     jev::JevClient,
     output::{TextOptions, TextStyle, write_text},
     runner::Plan,
@@ -83,6 +83,8 @@ enum SchemaKind {
     Rule,
     ConfigV2,
     RuleV2,
+    ConfigV3,
+    RuleV3,
 }
 
 #[tokio::main]
@@ -103,6 +105,8 @@ async fn run(cli: Cli) -> Result<u8> {
             SchemaKind::Rule => schemars::schema_for!(legacy::RuleFile),
             SchemaKind::ConfigV2 => schemars::schema_for!(v2::ConfigFile),
             SchemaKind::RuleV2 => schemars::schema_for!(v2::RuleFile),
+            SchemaKind::ConfigV3 => schemars::schema_for!(ConfigFile),
+            SchemaKind::RuleV3 => schemars::schema_for!(RuleFile),
         };
         write_json(&schema)?;
         return Ok(0);
