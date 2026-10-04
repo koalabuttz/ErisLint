@@ -2,7 +2,9 @@
 
 # Rust extraction checkpoint
 
-The reviewed first-stage refactors are implemented locally. C, Python and
+This is the historical pre-publication extraction report. The reviewed
+first-stage refactors were subsequently published and live-checked; see
+[the publication and live-check update](PUBLICATION.md). C, Python and
 assembly support have not begun. Architecture/dialect selection remains pending.
 The original [baseline](BASELINE.md) describes the earlier unmodified source;
 this report records the subsequent compatibility and extraction work.
@@ -73,7 +75,7 @@ Result SHA-256 values:
 - Frozen selected-function request fixture:
   `636891c2e6448b49d00de64d19e8d2406db5c20f0433bee4faa5549077f09126`
 
-## Remaining limits
+## Limits recorded before publication
 
 The VS Code extension-host check remains unrun because `code` is absent; protocol
 checks do not replace it. There were no live Jev calls or semantic lint findings.
