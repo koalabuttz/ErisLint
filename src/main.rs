@@ -160,10 +160,7 @@ async fn run(cli: Cli) -> Result<u8> {
             }
             plan.run(&config, &client, cli.jobs).await?
         };
-    let exit_code = u8::from(report.errors > 0 || (cli.deny_warnings && report.warnings > 0));
-    if cli.errors_only {
-        report.retain_errors();
-    }
+    let exit_code = report_status(&mut report, cli.deny_warnings, cli.errors_only);
     match cli.format {
         Format::Text | Format::Compact => write_text(
             io::stdout().lock(),
@@ -189,9 +186,79 @@ async fn run(cli: Cli) -> Result<u8> {
     Ok(exit_code)
 }
 
+fn report_status(
+    report: &mut erislint::runner::Report,
+    deny_warnings: bool,
+    errors_only: bool,
+) -> u8 {
+    let exit_code = u8::from(report.errors > 0 || (deny_warnings && report.warnings > 0));
+    if errors_only {
+        report.retain_errors();
+    }
+    exit_code
+}
+
 fn write_json(value: &impl Serialize) -> Result<()> {
     let mut stdout = io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, value)?;
     writeln!(stdout)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use erislint::{
+        config::assembly::{INCONCLUSIVE, UNCERTAINTY_DESCRIPTION},
+        runner::{diagnostics, rule_answers},
+    };
+    use serde_json::json;
+
+    #[test]
+    fn mock_assembly_uncertainty_obeys_cli_warning_and_display_flags() {
+        for profile in ["x86-gas-att32", "mos-llvm-c64"] {
+            for setting in ["warn", "error"] {
+                let project = tempfile::tempdir().unwrap();
+                std::fs::write(project.path().join("a.s"), "nop\n").unwrap();
+                let mut source = json!({"files":["*.s"],"profile":profile,"preprocessing":"none"});
+                if profile == "x86-gas-att32" {
+                    source["slash_mode"] = json!("gas-default");
+                }
+                let config_path = project.path().join("erislint.json");
+                let value = json!({"version":3,"include":["*.s"],"assembly_sources":[source],
+                    "rules":[{"id":"review","where":{"language":"assembly","profile":profile,"kind":"file"},
+                    "question":{"type":"choice","instructions":"Review source intent.","criteria":{"good":"Clear intent","insufficient_context":UNCERTAINTY_DESCRIPTION}},
+                    "diagnostics":[{"when":{"choice":"good"},"level":"error","message":"Substantive policy"}]}],
+                    "overrides":[{"files":["*.s"],"rules":{"review":setting}}]});
+                std::fs::write(&config_path, serde_json::to_vec(&value).unwrap()).unwrap();
+                let config = Config::load(&config_path).unwrap();
+                let plan = Plan::build(&config, &[]).unwrap();
+                let evaluation = &plan.evaluations[0];
+                for (flags, expected_exit, hidden) in [
+                    (vec![], 0, false),
+                    (vec!["--deny-warnings"], 1, false),
+                    (vec!["--errors-only"], 0, true),
+                    (vec!["--deny-warnings", "--errors-only"], 1, true),
+                ] {
+                    let cli =
+                        Cli::try_parse_from(std::iter::once("erislint").chain(flags)).unwrap();
+                    let response = serde_json::from_value(json!({"model":"offline-mock","answers":{"review":{"type":"choice","choice":"insufficient_context","confidence":0.99,"probabilities":{"good":0.01,"insufficient_context":0.99}}}})).unwrap();
+                    let mut report = plan.empty_report();
+                    report.answers = rule_answers(evaluation, &response);
+                    report.diagnostics = diagnostics(&config, evaluation, response).unwrap();
+                    assert_eq!(report.diagnostics.len(), 1);
+                    assert_eq!(report.diagnostics[0].message, INCONCLUSIVE);
+                    report.warnings = 1;
+                    assert_eq!(
+                        report_status(&mut report, cli.deny_warnings, cli.errors_only),
+                        expected_exit
+                    );
+                    assert_eq!(report.diagnostics.is_empty(), hidden);
+                    assert_eq!(report.answers.is_empty(), hidden);
+                    assert_eq!(report.warnings, usize::from(!hidden));
+                    assert_eq!(report.errors, 0);
+                }
+            }
+        }
+    }
 }
