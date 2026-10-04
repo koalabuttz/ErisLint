@@ -40,3 +40,19 @@ verification. Valid semantic abstentions continue to follow configured policies.
 
 Tests use generic synthetic inputs only. No private project code, identifiers,
 configuration, or raw provider records belong in these public fixtures.
+
+## Local verification checkpoint
+
+`cargo test --locked` passed all 126 tests (10 library, 2 CLI-unit, 114
+integration), with zero failures or ignored tests. `cargo fmt --check`,
+`cargo clippy --locked --all-targets -- -D warnings`, and `git diff --check`
+passed. The extension's `npm test` compiled TypeScript and passed all six
+protocol tests. Desktop extension-host tests remain unrun (`code` unavailable).
+
+The unchanged self-lint policy passed offline `--check-config`; whole-project
+`--dry-run` constructed 284 requests/questions across 28 files. This validates
+configuration, extraction and request construction, not semantic model findings.
+The CLI tests preserve warning thresholds and distinguish operational exit 2
+from semantic warnings (exit 0 normally, exit 1 with `--deny-warnings`), including
+`--errors-only` display filtering. Complete invalid responses are checked for
+exactly one transport attempt; transient retries retain their four-attempt test.

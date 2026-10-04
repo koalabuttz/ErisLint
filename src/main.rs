@@ -89,7 +89,11 @@ enum SchemaKind {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match run(Cli::parse()).await {
+    finish(run(Cli::parse()).await)
+}
+
+fn finish(result: Result<u8>) -> ExitCode {
+    match result {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             eprintln!("erislint: {error:#}");
@@ -213,6 +217,87 @@ mod tests {
         runner::{diagnostics, rule_answers},
     };
     use serde_json::json;
+
+    // Fork-specific: provider failures must never take the semantic warning path.
+    #[test]
+    fn response_validation_diagnostics_and_exit_status_are_distinct() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("sample.rs"), "fn example() {}\n").unwrap();
+        let config_path = project.path().join("erislint.json");
+        let value = json!({"rules":[{"id":"review","where":{"kind":"function"},
+        "question":{"type":"choice","instructions":"Review the local observation.",
+            "criteria":{"supported":"Supported","concern":"Concern","not_applicable":"Not applicable","insufficient_context":"Missing context"}},
+        "diagnostics":[
+            {"when":{"choice":"concern","min_confidence":0.65},"level":"warn","message":"Review {name}"},
+            {"when":{"choice":"insufficient_context"},"level":"warn","message":"Inconclusive {name}"}
+        ]}]});
+        std::fs::write(&config_path, serde_json::to_vec(&value).unwrap()).unwrap();
+        let config = Config::load(&config_path).unwrap();
+        let plan = Plan::build(&config, &[]).unwrap();
+        let evaluation = &plan.evaluations[0];
+        for (choice, confidence, probabilities, warning) in [
+            ("insufficient_context", 0.2, [0.2, 0.2, 0.2, 0.4], true),
+            ("concern", 0.65, [0.1, 0.8, 0.05, 0.05], true),
+            ("concern", 0.64, [0.1, 0.8, 0.05, 0.05], false),
+            ("supported", 0.8, [0.9, 0.05, 0.03, 0.02], false),
+        ] {
+            for (deny, errors_only) in [(false, false), (true, false), (false, true), (true, true)]
+            {
+                let [supported, concern, not_applicable, insufficient_context] = probabilities;
+                let response = serde_json::from_value(json!({"model":"offline-mock","answers":{"review":{
+                    "type":"choice","choice":choice,"confidence":confidence,
+                    "probabilities":{"supported":supported,"concern":concern,"not_applicable":not_applicable,"insufficient_context":insufficient_context}
+                }}})).unwrap();
+                let mut report = plan.empty_report();
+                report.answers = rule_answers(evaluation, &response);
+                report.diagnostics = diagnostics(&config, evaluation, response).unwrap();
+                report.warnings = report.diagnostics.len();
+                assert_eq!(report.warnings, usize::from(warning));
+                let status = report_status(&mut report, deny, errors_only);
+                assert_eq!(
+                    finish(Ok(status)),
+                    ExitCode::from(u8::from(deny && warning))
+                );
+                let mut rendered = Vec::new();
+                write_text(
+                    &mut rendered,
+                    &report,
+                    &plan,
+                    TextOptions {
+                        style: TextStyle::Compact,
+                        errors_only,
+                        all_answers: false,
+                        color: false,
+                    },
+                )
+                .unwrap();
+                let rendered = String::from_utf8(rendered).unwrap();
+                assert_eq!(
+                    rendered.contains("Inconclusive example"),
+                    choice == "insufficient_context" && !errors_only
+                );
+                assert_eq!(
+                    rendered.contains("Review example"),
+                    choice == "concern" && warning && !errors_only
+                );
+            }
+        }
+        for choice in ["supported", "insufficient_context"] {
+            let response = serde_json::from_value(json!({"model":"offline-mock","answers":{"review":{
+                "type":"choice","choice":choice,"confidence":0.2,
+                "probabilities":{"supported":0.2,"concern":0.4,"not_applicable":0.2,"insufficient_context":0.2}
+            }}})).unwrap();
+            let result = diagnostics(&config, evaluation, response).map(|_| 0);
+            assert!(
+                result
+                    .as_ref()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("not a maximum")
+            );
+            assert_eq!(finish(result), ExitCode::from(2));
+        }
+    }
 
     #[test]
     fn mock_assembly_uncertainty_obeys_cli_warning_and_display_flags() {
