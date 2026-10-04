@@ -56,6 +56,7 @@ Escaped line continuations outside strings are recorded with physical spans;
 comments end at physical newlines unless already inside a CPP record. Preserve
 literal punctuation such as `'#'` in MOS and `'#` in GAS before comment detection.
 Neither comment bodies nor strings may recursively create markers or directives.
+An unmatched block-comment terminator outside a comment is operationally unsupported.
 
 ## 2. Precedence and structural state
 
@@ -98,7 +99,8 @@ reject other `.if*` forms initially with `unsupported_conditional_form`.
 
 Reject `.altmacro` and `.noaltmacro` wherever the structural scan sees them;
 alternate macro quoting/concatenation is not implemented. Also reject `.code16`,
-`.code64`, `.intel_syntax`, and unsupported MOS CPU/variant state switches even
+`.code64`, `.intel_syntax`, and unsupported MOS CPU/variant state switches (including `.cpu`, `.setcpu`, `.arch`,
+`.machine` and `.syntax`) even
 inside unexpanded macro/repetition bodies or unknown conditional branches. No
 claim that a macro is invoked or a branch active is needed for this conservative
 source restriction. Supported `.code32`/`.att_syntax` are declared-state records,
