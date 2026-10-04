@@ -182,12 +182,15 @@ impl Plan {
         // An out-of-scope snapshot must not be validated by a source adapter
         // merely because its file glob is broad. Keep legacy Rust extension/error ordering intact.
         if included || !config.has_source_adapters() {
-            let adapter =
-                Adapter::for_path(&path, config)?.context(if config.has_source_adapters() {
+            let adapter = Adapter::for_path(&path, config)?.context(
+                if !config.assembly_sources.is_empty() {
+                    "editor input must be a configured Rust, C, Python or assembly file"
+                } else if config.has_source_adapters() {
                     "editor input must be a configured Rust, C or Python file"
                 } else {
                     "editor input must be a Rust file"
-                })?;
+                },
+            )?;
             if included {
                 let prepared = adapter.prepare(&path, config.edition)?;
                 evaluations = Self::source_evaluations(config, &path, source, prepared)?;
@@ -227,11 +230,16 @@ impl Plan {
         let kinds = config
             .rules
             .values()
-            .filter(|rule| rule.definition.r#where.language() == adapter.language())
+            .filter(|rule| adapter.matches(&rule.definition.r#where))
+            .filter(|rule| {
+                adapter.language() != Language::Assembly
+                    || (rule.filter.matches(relative)
+                        && config.setting(relative, &rule.definition.id) != Some(RuleSetting::Off))
+            })
             .map(|rule| rule.definition.r#where.kind)
             .collect();
         let active_source_rules = config.rules.iter().any(|(id, rule)| {
-            rule.definition.r#where.language() == adapter.language()
+            adapter.matches(&rule.definition.r#where)
                 && rule.filter.matches(relative)
                 && config.setting(relative, id) != Some(RuleSetting::Off)
         });
@@ -246,7 +254,7 @@ impl Plan {
             let mut questions_by_context = BTreeMap::<InputContext, BTreeMap<_, _>>::new();
             for (id, rule) in &config.rules {
                 let selector = &rule.definition.r#where;
-                if selector.language() == adapter.language()
+                if adapter.matches(selector)
                     && selector.kind == target.kind
                     && selector
                         .has_body
@@ -254,10 +262,16 @@ impl Plan {
                     && rule.filter.matches(relative)
                     && config.setting(relative, id) != Some(RuleSetting::Off)
                 {
+                    let mut question = rule.definition.question.clone();
+                    if adapter.language() == Language::Assembly {
+                        let crate::jev::Question::Choice { instructions, .. } = &mut question;
+                        instructions.push_str("\n\n");
+                        instructions.push_str(crate::config::assembly::GUIDANCE);
+                    }
                     questions_by_context
                         .entry(rule.definition.context)
                         .or_default()
-                        .insert(id.clone(), rule.definition.question.clone());
+                        .insert(id.clone(), question);
                 }
             }
             for (context, questions) in questions_by_context {
@@ -282,7 +296,9 @@ impl Plan {
         ensure!(
             adapter.language() == Language::Rust || !active_source_rules || !evaluations.is_empty(),
             "no supported {} targets matched active rules for {}; use a file rule for files without matching functions",
-            if adapter.language() == Language::Python {
+            if adapter.language() == Language::Assembly {
+                "assembly"
+            } else if adapter.language() == Language::Python {
                 "Python"
             } else {
                 "C"
@@ -386,6 +402,22 @@ pub fn diagnostics(
         .into_iter()
         .filter_map(|(id, answer)| {
             let rule = &config.rules.get(&id)?.definition;
+            if config.setting(&evaluation.location.file, &id) == Some(RuleSetting::Off) {
+                return None;
+            }
+            if rule.r#where.language() == Language::Assembly
+                && answer.choice == crate::config::assembly::UNCERTAINTY
+            {
+                return Some(Ok(Diagnostic {
+                    rule: id,
+                    level: Level::Warn,
+                    message: crate::config::assembly::INCONCLUSIVE.into(),
+                    target: evaluation.target.clone(),
+                    location: evaluation.location.clone(),
+                    model: response.model.clone(),
+                    answer,
+                }));
+            }
             let policy = rule
                 .diagnostics
                 .iter()

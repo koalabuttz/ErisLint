@@ -392,3 +392,198 @@ fn malformed_empty_nested_and_duplicate_regions_are_operational_errors() {
     tokenize(good, options()).unwrap();
     assert!(tokenize(&good.repeat(2), options()).is_err());
 }
+
+use erislint::{
+    assembly,
+    config::InputContext,
+    policy::Level,
+    runner::{Plan, diagnostics},
+    source::TargetKind,
+};
+use std::{collections::BTreeSet, process::Command};
+#[test]
+fn legacy_cli_error_bytes_match_pre_v3_binary() {
+    let fixture: Value = serde_json::from_str(include_str!("fixtures/legacy-errors.json")).unwrap();
+    for c in fixture["cases"].as_array().unwrap() {
+        let p = Project::new();
+        p.write("erislint.json", c["config_text"].as_str().unwrap());
+        for (name, source) in c["files"].as_object().unwrap() {
+            p.write(name, source.as_str().unwrap());
+        }
+        let args: Vec<_> = c["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap())
+            .collect();
+        let out = Command::new(env!("CARGO_BIN_EXE_erislint"))
+            .current_dir(p.root())
+            .env_remove("jev_key")
+            .args(["--config", p.root().join("erislint.json").to_str().unwrap()])
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2));
+        assert_eq!(
+            String::from_utf8(out.stderr)
+                .unwrap()
+                .replace(p.root().to_str().unwrap(), "<ROOT>"),
+            c["stderr"],
+            "{}",
+            c["name"]
+        );
+    }
+}
+#[test]
+fn essential_dependencies_survive_all_context_modes_and_file_bytes_are_complete() {
+    let source = ".set FLAG, unknown\n.macro helper\nnop\n.endm\n.if FLAG\n# erislint-region-begin r\nhelper\n# erislint-region-end r\n.endif\n";
+    let ts = assembly::extract(
+        source,
+        options(),
+        &BTreeSet::from([TargetKind::File, TargetKind::AssemblyRegion]),
+    )
+    .unwrap();
+    assert_eq!(ts.len(), 2);
+    let base = ts[1].input(InputContext::Target, source);
+    assert_eq!(base["source"], "helper\n");
+    assert!(
+        base["analysis"]["dependencies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["kind"] == "macro_body")
+    );
+    for context in [
+        InputContext::Target,
+        InputContext::Enclosing,
+        InputContext::File,
+    ] {
+        assert_eq!(ts[1].input(context, source)["analysis"], base["analysis"]);
+    }
+    for source in ["", " \t\r\n"] {
+        let t = assembly::extract(source, options(), &BTreeSet::from([TargetKind::File])).unwrap();
+        assert_eq!(t[0].range.end, source.len());
+        assert_eq!(t[0].input(InputContext::Target, source)["source"], source);
+    }
+}
+#[test]
+fn active_region_rules_fail_without_markers_but_explicit_off_skips() {
+    let p = Project::new();
+    let path = p.write("a.s", "nop\n");
+    let mut v = config(vec![
+        asm_rule("file", "file"),
+        asm_rule("region", "assembly_region"),
+    ]);
+    let c = p.config(v.clone());
+    assert!(error(Plan::build(&c, &[])).contains("no assembly regions"));
+    v["overrides"] = json!([{"files":["**"],"rules":{"region":"off"}}]);
+    let c = p.config(v.clone());
+    assert_eq!(Plan::build(&c, &[]).unwrap().evaluations.len(), 1);
+    v["overrides"][0]["rules"]["file"] = json!("off");
+    let c = p.config(v);
+    assert!(
+        Plan::from_source(&c, &path, ".intel_syntax")
+            .unwrap()
+            .evaluations
+            .is_empty()
+    );
+}
+#[test]
+fn assembly_uncertainty_is_fixed_warning_and_substantive_policies_are_unchanged() {
+    let p = Project::new();
+    p.write("a.s", "nop\n");
+    for setting in ["warn", "error"] {
+        let mut v = config(vec![asm_rule("a", "file")]);
+        v["overrides"] = json!([{"files":["**"],"rules":{"a":setting}}]);
+        let c = p.config(v);
+        let plan = Plan::build(&c, &[]).unwrap();
+        assert!(
+            plan.evaluations[0].request.questions["a"]
+                .choices()
+                .contains_key("insufficient_context")
+        );
+        for (choice, probabilities) in [
+            (
+                "insufficient_context",
+                json!({"good":0.1,"bad":0.1,"insufficient_context":0.8}),
+            ),
+            (
+                "bad",
+                json!({"good":0.1,"bad":0.8,"insufficient_context":0.1}),
+            ),
+        ] {
+            let response=serde_json::from_value(json!({"model":"mock","answers":{"a":{"type":"choice","choice":choice,"confidence":0.99,"probabilities":probabilities}}})).unwrap();
+            let ds = diagnostics(&c, &plan.evaluations[0], response).unwrap();
+            assert_eq!(ds.len(), 1);
+            if choice == "insufficient_context" {
+                assert_eq!(ds[0].level, Level::Warn);
+                assert_eq!(ds[0].message, erislint::config::assembly::INCONCLUSIVE);
+            } else {
+                assert_eq!(
+                    ds[0].level,
+                    if setting == "warn" {
+                        Level::Warn
+                    } else {
+                        Level::Error
+                    }
+                );
+            }
+        }
+    }
+}
+#[test]
+fn mixed_v3_cache_selection_filtering_and_unsaved_sources_are_separate() {
+    let p = Project::new();
+    p.write(
+        "Cargo.toml",
+        "[package]\nname='mixed'\nversion='0.1.0'\nedition='2024'\n",
+    );
+    let paths = [
+        p.write("a.rs", "fn a() {}"),
+        p.write("b.c", "int b(void){return 0;}"),
+        p.write("c.py", "def c(): pass"),
+        p.write("d.s", "value = 4/2\n"),
+        p.write("e.S", "#define X 1\nnop\n"),
+    ];
+    let mut c = rule("c");
+    c["where"]["language"] = json!("c");
+    let mut py = rule("p");
+    py["where"]["language"] = json!("python");
+    let mut v = config(vec![rule("r"), c, py, asm_rule("a", "file")]);
+    v["include"] = json!(["**"]);
+    v["c_files"] = json!(["**/*.c"]);
+    v["python_files"] = json!(["**/*.py"]);
+    v["assembly_sources"] = json!([{"files":["*.s"],"profile":"x86-gas-att32","preprocessing":"none","slash_mode":"divide"},{"files":["*.S"],"profile":"x86-gas-att32","preprocessing":"cpp-unexpanded","slash_mode":"gas-default"}]);
+    let c = p.config(v.clone());
+    let expected = serde_json::to_value(Plan::build(&c, &[]).unwrap()).unwrap();
+    assert_eq!(expected["evaluations"].as_array().unwrap().len(), 5);
+    let reversed: Vec<_> = paths
+        .iter()
+        .rev()
+        .cloned()
+        .chain([paths[0].clone()])
+        .collect();
+    assert_eq!(
+        serde_json::to_value(Plan::build(&c, &reversed).unwrap()).unwrap(),
+        expected
+    );
+    let snapshot = Plan::from_source(&c, &paths[3], ".byte 'A\n").unwrap();
+    assert_eq!(
+        snapshot.evaluations[0].request.state["source"],
+        ".byte 'A\n"
+    );
+    assert_eq!(std::fs::read_to_string(&paths[3]).unwrap(), "value = 4/2\n");
+    v["assembly_sources"][0]["files"] = json!(["**"]);
+    v["include"] = json!(["d.s"]);
+    let c = p.config(v.clone());
+    assert_eq!(Plan::build(&c, &[]).unwrap().files, 1);
+    assert!(
+        Plan::from_source(&c, &paths[0], "bad")
+            .unwrap()
+            .evaluations
+            .is_empty()
+    );
+    v["include"] = json!(["**"]);
+    let c = p.config(v);
+    assert!(Plan::build(&c, &[]).is_err());
+}

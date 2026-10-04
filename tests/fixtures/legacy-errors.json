@@ -1,0 +1,316 @@
+{
+  "baseline_commit": "fe38735f310558c04f3e8b033068c8b6641425b8",
+  "cases": [
+    {
+      "name": "v1-null-python",
+      "config": {
+        "version": 1,
+        "python_files": null,
+        "rules": [
+          {
+            "id": "r",
+            "where": {
+              "kind": "function"
+            },
+            "question": {
+              "type": "choice",
+              "instructions": "Review source.",
+              "criteria": {
+                "good": "Good",
+                "bad": "Bad"
+              }
+            },
+            "diagnostics": [
+              {
+                "when": {
+                  "choice": "bad"
+                },
+                "level": "warn",
+                "message": "Review {name}"
+              }
+            ]
+          }
+        ]
+      },
+      "files": {},
+      "args": [
+        "--check-config"
+      ],
+      "config_text": "{\n  \"version\": 1,\n  \"python_files\": null,\n  \"rules\": [\n    {\n      \"id\": \"r\",\n      \"where\": {\n        \"kind\": \"function\"\n      },\n      \"question\": {\n        \"type\": \"choice\",\n        \"instructions\": \"Review source.\",\n        \"criteria\": {\n          \"good\": \"Good\",\n          \"bad\": \"Bad\"\n        }\n      },\n      \"diagnostics\": [\n        {\n          \"when\": {\n            \"choice\": \"bad\"\n          },\n          \"level\": \"warn\",\n          \"message\": \"Review {name}\"\n        }\n      ]\n    }\n  ]\n}\n",
+      "stderr": "erislint: invalid version-1 JSON in <ROOT>/erislint.json (new fields require version 2): unknown field `python_files`, expected one of `$schema`, `version`, `extends`, `model`, `edition`, `include`, `exclude`, `rules`, `rule_files`, `overrides` at line 3 column 16\n",
+      "exit_code": 2
+    },
+    {
+      "name": "v2-unknown-field",
+      "config": {
+        "version": 2,
+        "typo": true,
+        "rules": [
+          {
+            "id": "r",
+            "where": {
+              "kind": "function"
+            },
+            "question": {
+              "type": "choice",
+              "instructions": "Review source.",
+              "criteria": {
+                "good": "Good",
+                "bad": "Bad"
+              }
+            },
+            "diagnostics": [
+              {
+                "when": {
+                  "choice": "bad"
+                },
+                "level": "warn",
+                "message": "Review {name}"
+              }
+            ]
+          }
+        ]
+      },
+      "files": {},
+      "args": [
+        "--check-config"
+      ],
+      "config_text": "{\n  \"version\": 2,\n  \"typo\": true,\n  \"rules\": [\n    {\n      \"id\": \"r\",\n      \"where\": {\n        \"kind\": \"function\"\n      },\n      \"question\": {\n        \"type\": \"choice\",\n        \"instructions\": \"Review source.\",\n        \"criteria\": {\n          \"good\": \"Good\",\n          \"bad\": \"Bad\"\n        }\n      },\n      \"diagnostics\": [\n        {\n          \"when\": {\n            \"choice\": \"bad\"\n          },\n          \"level\": \"warn\",\n          \"message\": \"Review {name}\"\n        }\n      ]\n    }\n  ]\n}\n",
+      "stderr": "erislint: invalid JSON in <ROOT>/erislint.json: unknown field `typo`, expected one of `$schema`, `version`, `extends`, `model`, `edition`, `include`, `exclude`, `c_files`, `python_files`, `rules`, `rule_files`, `overrides` at line 3 column 8\n",
+      "exit_code": 2
+    },
+    {
+      "name": "v1-object-import",
+      "config": {
+        "version": 1,
+        "rule_files": [
+          {
+            "path": "rules.json",
+            "version": 2
+          }
+        ]
+      },
+      "files": {},
+      "args": [
+        "--check-config"
+      ],
+      "config_text": "{\n  \"version\": 1,\n  \"rule_files\": [\n    {\n      \"path\": \"rules.json\",\n      \"version\": 2\n    }\n  ]\n}\n",
+      "stderr": "erislint: invalid JSON in <ROOT>/erislint.json: invalid type: map, expected path string at line 4 column 4\n",
+      "exit_code": 2
+    },
+    {
+      "name": "v2-c-missing-rule",
+      "config": {
+        "version": 2,
+        "c_files": [
+          "**/*.c"
+        ],
+        "rules": [
+          {
+            "id": "r",
+            "where": {
+              "kind": "function"
+            },
+            "question": {
+              "type": "choice",
+              "instructions": "Review source.",
+              "criteria": {
+                "good": "Good",
+                "bad": "Bad"
+              }
+            },
+            "diagnostics": [
+              {
+                "when": {
+                  "choice": "bad"
+                },
+                "level": "warn",
+                "message": "Review {name}"
+              }
+            ]
+          }
+        ]
+      },
+      "files": {},
+      "args": [
+        "--check-config"
+      ],
+      "config_text": "{\n  \"version\": 2,\n  \"c_files\": [\n    \"**/*.c\"\n  ],\n  \"rules\": [\n    {\n      \"id\": \"r\",\n      \"where\": {\n        \"kind\": \"function\"\n      },\n      \"question\": {\n        \"type\": \"choice\",\n        \"instructions\": \"Review source.\",\n        \"criteria\": {\n          \"good\": \"Good\",\n          \"bad\": \"Bad\"\n        }\n      },\n      \"diagnostics\": [\n        {\n          \"when\": {\n            \"choice\": \"bad\"\n          },\n          \"level\": \"warn\",\n          \"message\": \"Review {name}\"\n        }\n      ]\n    }\n  ]\n}\n",
+      "stderr": "erislint: C rules and explicit c_files must be configured together\n",
+      "exit_code": 2
+    },
+    {
+      "name": "v2-missing-files",
+      "config": {
+        "version": 2,
+        "rules": [
+          {
+            "id": "r",
+            "where": {
+              "kind": "function"
+            },
+            "question": {
+              "type": "choice",
+              "instructions": "Review source.",
+              "criteria": {
+                "good": "Good",
+                "bad": "Bad"
+              }
+            },
+            "diagnostics": [
+              {
+                "when": {
+                  "choice": "bad"
+                },
+                "level": "warn",
+                "message": "Review {name}"
+              }
+            ]
+          }
+        ]
+      },
+      "files": {},
+      "args": [
+        "--dry-run"
+      ],
+      "config_text": "{\n  \"version\": 2,\n  \"rules\": [\n    {\n      \"id\": \"r\",\n      \"where\": {\n        \"kind\": \"function\"\n      },\n      \"question\": {\n        \"type\": \"choice\",\n        \"instructions\": \"Review source.\",\n        \"criteria\": {\n          \"good\": \"Good\",\n          \"bad\": \"Bad\"\n        }\n      },\n      \"diagnostics\": [\n        {\n          \"when\": {\n            \"choice\": \"bad\"\n          },\n          \"level\": \"warn\",\n          \"message\": \"Review {name}\"\n        }\n      ]\n    }\n  ]\n}\n",
+      "stderr": "erislint: no Rust source files matched the configured paths\n",
+      "exit_code": 2
+    },
+    {
+      "name": "v1-invalid-context",
+      "config": {
+        "version": 1,
+        "rules": [
+          {
+            "id": "r",
+            "where": {
+              "kind": "function"
+            },
+            "question": {
+              "type": "choice",
+              "instructions": "Review source.",
+              "criteria": {
+                "good": "Good",
+                "bad": "Bad"
+              }
+            },
+            "diagnostics": [
+              {
+                "when": {
+                  "choice": "bad"
+                },
+                "level": "warn",
+                "message": "Review {name}"
+              }
+            ],
+            "context": "bad"
+          }
+        ]
+      },
+      "files": {},
+      "args": [
+        "--check-config"
+      ],
+      "config_text": "{\n  \"version\": 1,\n  \"rules\": [\n    {\n      \"id\": \"r\",\n      \"where\": {\n        \"kind\": \"function\"\n      },\n      \"question\": {\n        \"type\": \"choice\",\n        \"instructions\": \"Review source.\",\n        \"criteria\": {\n          \"good\": \"Good\",\n          \"bad\": \"Bad\"\n        }\n      },\n      \"diagnostics\": [\n        {\n          \"when\": {\n            \"choice\": \"bad\"\n          },\n          \"level\": \"warn\",\n          \"message\": \"Review {name}\"\n        }\n      ],\n      \"context\": \"bad\"\n    }\n  ]\n}\n",
+      "stderr": "erislint: invalid JSON in <ROOT>/erislint.json: unknown variant `bad`, expected one of `target`, `enclosing`, `file` at line 26 column 22\n",
+      "exit_code": 2
+    },
+    {
+      "name": "v2-empty-include",
+      "config": {
+        "version": 2,
+        "include": [],
+        "rules": [
+          {
+            "id": "r",
+            "where": {
+              "kind": "function"
+            },
+            "question": {
+              "type": "choice",
+              "instructions": "Review source.",
+              "criteria": {
+                "good": "Good",
+                "bad": "Bad"
+              }
+            },
+            "diagnostics": [
+              {
+                "when": {
+                  "choice": "bad"
+                },
+                "level": "warn",
+                "message": "Review {name}"
+              }
+            ]
+          }
+        ]
+      },
+      "files": {},
+      "args": [
+        "--check-config"
+      ],
+      "config_text": "{\n  \"version\": 2,\n  \"include\": [],\n  \"rules\": [\n    {\n      \"id\": \"r\",\n      \"where\": {\n        \"kind\": \"function\"\n      },\n      \"question\": {\n        \"type\": \"choice\",\n        \"instructions\": \"Review source.\",\n        \"criteria\": {\n          \"good\": \"Good\",\n          \"bad\": \"Bad\"\n        }\n      },\n      \"diagnostics\": [\n        {\n          \"when\": {\n            \"choice\": \"bad\"\n          },\n          \"level\": \"warn\",\n          \"message\": \"Review {name}\"\n        }\n      ]\n    }\n  ]\n}\n",
+      "stderr": "erislint: include must contain at least one file pattern\n",
+      "exit_code": 2
+    },
+    {
+      "name": "v2-external-invalid",
+      "config": {
+        "version": 2,
+        "rule_files": [
+          "rules.json"
+        ]
+      },
+      "files": {
+        "rules.json": "{\"id\": \"r\", \"where\": {\"kind\": \"function\"}, \"question\": {\"type\": \"choice\", \"instructions\": \"Review source.\", \"criteria\": {\"good\": \"Good\", \"bad\": \"Bad\"}}, \"diagnostics\": [{\"when\": {\"choice\": \"bad\"}, \"level\": \"warn\", \"message\": \"Review {name}\"}], \"unknown\": true}"
+      },
+      "args": [
+        "--check-config"
+      ],
+      "config_text": "{\n  \"version\": 2,\n  \"rule_files\": [\n    \"rules.json\"\n  ]\n}\n",
+      "stderr": "erislint: invalid JSON in <ROOT>/rules.json: unknown field `unknown`, expected one of `$schema`, `id`, `where`, `context`, `question`, `diagnostics`\n",
+      "exit_code": 2
+    },
+    {
+      "name": "v2-unknown-language",
+      "config": {
+        "version": 2,
+        "rules": [
+          {
+            "id": "r",
+            "where": {
+              "language": "bad",
+              "kind": "file"
+            },
+            "question": {
+              "type": "choice",
+              "instructions": "Review source.",
+              "criteria": {
+                "good": "Good",
+                "bad": "Bad"
+              }
+            },
+            "diagnostics": [
+              {
+                "when": {
+                  "choice": "bad"
+                },
+                "level": "warn",
+                "message": "Review {name}"
+              }
+            ]
+          }
+        ]
+      },
+      "files": {},
+      "args": [
+        "--check-config"
+      ],
+      "config_text": "{\n  \"version\": 2,\n  \"rules\": [\n    {\n      \"id\": \"r\",\n      \"where\": {\n        \"language\": \"bad\",\n        \"kind\": \"file\"\n      },\n      \"question\": {\n        \"type\": \"choice\",\n        \"instructions\": \"Review source.\",\n        \"criteria\": {\n          \"good\": \"Good\",\n          \"bad\": \"Bad\"\n        }\n      },\n      \"diagnostics\": [\n        {\n          \"when\": {\n            \"choice\": \"bad\"\n          },\n          \"level\": \"warn\",\n          \"message\": \"Review {name}\"\n        }\n      ]\n    }\n  ]\n}\n",
+      "stderr": "erislint: invalid JSON in <ROOT>/erislint.json: unknown variant `bad`, expected one of `rust`, `c`, `python` at line 7 column 25\n",
+      "exit_code": 2
+    }
+  ]
+}
