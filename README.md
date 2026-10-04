@@ -380,6 +380,10 @@ References: [Jev API](https://docs.typesafe.ai/api),
 
 ## Fork-specific additions
 
+The planned standalone-language milestone is complete. Start with the
+[CLI guide](docs/fork/GETTING-STARTED.md), or read the
+[completion and limited live-review record](docs/fork/MILESTONE-COMPLETE.md).
+
 This fork preserves the upstream Rust defaults and credit. An opt-in version-2
 configuration adds source-level C function/file inspection, including explicitly
 selected C headers. See the [C example](examples/c/README.md) and
