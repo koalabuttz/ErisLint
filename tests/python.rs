@@ -309,3 +309,120 @@ fn python_editor_snapshots_diagnostics_and_target_selection_share_pipeline() {
     assert_eq!(std::fs::read_to_string(path).unwrap(), "saved = 1\n");
     assert_eq!(plan.source(std::path::Path::new("source.py")), Some(source));
 }
+
+use std::{
+    io::Write,
+    process::{Command, Stdio},
+};
+
+#[test]
+fn complete_python_example_requests_match_frozen_bytes() {
+    let p = Project::new();
+    p.write("sample.py", include_str!("../examples/python/sample.py"));
+    p.write(
+        "erislint.json",
+        include_str!("../examples/python/erislint.json"),
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_erislint"))
+        .current_dir(p.root())
+        .env_remove("jev_key")
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        output.stdout,
+        include_bytes!("fixtures/python-example.json")
+    );
+}
+
+#[test]
+fn cli_python_snapshot_selects_exact_utf8_name_without_changing_disk() {
+    let p = Project::new();
+    p.write("sample.py", "saved=1\n");
+    p.config(config(vec![python_rule("p", "function")]));
+    let source = "# 🦀\r\n@missing\r\nasync def café(): return 1\r\n";
+    let start = source.find("café").unwrap();
+    for offset in [start, start + 4] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_erislint"))
+            .current_dir(p.root())
+            .env_remove("jev_key")
+            .args([
+                "--dry-run",
+                "--stdin-file",
+                "sample.py",
+                "--target-start",
+                &offset.to_string(),
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(source.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        if offset == start {
+            assert!(output.status.success());
+            let v: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(v["evaluations"][0]["target"], "café");
+            assert_eq!(
+                v["evaluations"][0]["request"]["state"]["language"],
+                "python"
+            );
+        } else {
+            assert_eq!(output.status.code(), Some(2));
+        }
+    }
+    assert_eq!(
+        std::fs::read_to_string(p.root().join("sample.py")).unwrap(),
+        "saved=1\n"
+    );
+}
+
+#[test]
+fn python_file_snapshot_retains_complete_bytes_and_rejects_invalid_utf8_disk() {
+    let p = Project::new();
+    let path = p.write("a.py", "saved=1\n");
+    let c = p.config(config(vec![python_rule("p", "file")]));
+    for source in [
+        " \t\r\n",
+        "\n# full prefix\nraise RuntimeError('never executed')\n",
+    ] {
+        let plan = Plan::from_source(&c, &path, source).unwrap();
+        let e = &plan.evaluations[0];
+        assert_eq!((e.range.start, e.range.end), (0, source.len()));
+        assert_eq!(e.request.state["source"], source);
+    }
+    p.write("a.py", [0xff, 0xfe]);
+    assert!(error(Plan::build(&c, &[])).contains("cannot read"));
+}
+
+#[test]
+fn legacy_valid_rules_cannot_acquire_class_targets_or_python_defaults() {
+    let p = Project::new();
+    let mut r = rule("r");
+    r["where"] = json!({"kind":"class"});
+    for version in [1, 2] {
+        assert!(
+            Config::load(&p.json(
+                "erislint.json",
+                &json!({"version":version,"rules":[r.clone()]})
+            ))
+            .is_err()
+        );
+    }
+    let mut value = config(vec![python_rule("p", "function")]);
+    value.as_object_mut().unwrap().remove("include");
+    let c = p.config(value);
+    p.write("a.py", "def a(): pass\n");
+    assert!(error(Plan::build(&c, &[])).contains("no configured source files"));
+}

@@ -387,6 +387,13 @@ selected C headers. See the [C example](examples/c/README.md) and
 with `--schema config-v2` and `--schema rule-v2`; the original schema commands
 remain version 1. VS Code activation remains Rust-only.
 
+The fork also supports opt-in UTF-8 Python `.py` source inspection: files, classes,
+functions, async functions and methods. See the [Python example](examples/python/README.md)
+and [Python contract](docs/fork/PYTHON-DESIGN.md). Set both `python_files` and
+`where.language: "python"` in version 2, with global `include` patterns that cover
+those files. No Python code is executed or imported; parser and dynamic-context
+limitations remain explicit. Assembly support is not implemented.
+
 ## License
 
 Copyright (C) 2026 [Eriskii](https://github.com/Eriskii).

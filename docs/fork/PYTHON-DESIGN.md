@@ -9,7 +9,7 @@ Use the maintained [Tree-sitter Python grammar](https://github.com/tree-sitter/t
 from crates.io, pinned to `tree-sitter-python = 0.25.0` (MIT). The supported parser
 contract is that exact grammar's Python 3 syntax subset, not a claim of complete
 CPython version conformance. Python 2 print/exec statements and backtick repr
-syntax are explicitly rejected. Grammar errors or missing nodes fail analysis.
+syntax and empty suites are explicitly rejected. Grammar errors or missing nodes fail analysis.
 Newer syntax unsupported by this grammar must fail rather than be guessed.
 
 Version 2 adds explicit `python_files` (`.py` only) and `where.language: python`.
