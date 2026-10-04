@@ -7,9 +7,13 @@ behavior and the existing opt-in C adapter. Assembly is outside this milestone.
 
 Use the maintained [Tree-sitter Python grammar](https://github.com/tree-sitter/tree-sitter-python)
 from crates.io, pinned to `tree-sitter-python = 0.25.0` (MIT). The supported parser
-contract is that exact grammar's Python 3 syntax subset, not a claim of complete
-CPython version conformance. Python 2 print/exec statements and backtick repr
-syntax and empty suites are explicitly rejected. Grammar errors or missing nodes fail analysis.
+contract is that exact permissive grammar with explicit exclusions, not a Python
+version validator or a claim of CPython conformance. Python 2 print/exec statements,
+backtick repr syntax and empty suites are explicitly rejected. Other legacy forms
+remain accepted, including `1L`, `a <> b` and tuple-unpacking parameters such as
+`def f((a, b)): pass`; parsing them does not establish Python 3 validity. Grammar
+errors or missing nodes fail operationally. The accepted-legacy fixture records
+this boundary without executing its contents.
 Newer syntax unsupported by this grammar must fail rather than be guessed.
 
 Version 2 adds explicit `python_files` (`.py` only) and `where.language: python`.

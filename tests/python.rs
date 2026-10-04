@@ -512,3 +512,26 @@ fn parenthesized_literal_docstrings_preserve_raw_expression_in_any_scope() {
         }
     }
 }
+
+#[test]
+fn pinned_permissive_grammar_accepts_documented_legacy_forms_without_version_claims() {
+    let source = include_str!("fixtures/python-grammar/accepted-legacy.py");
+    let targets = python::extract(
+        source,
+        &BTreeSet::from([TargetKind::File, TargetKind::Function]),
+    )
+    .unwrap();
+    assert_eq!(
+        targets.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+        ["<file>", "unpack"]
+    );
+    let file = targets[0].input(InputContext::Target, source);
+    assert_eq!(file["source"], source);
+    assert_eq!(file["analysis"]["completeness"], "incomplete");
+    let contract = file["analysis"]["syntax_contract"].as_str().unwrap();
+    assert!(contract.contains("accepts some legacy Python 2 syntax"));
+    assert!(contract.contains("not Python version or CPython conformance validation"));
+    let function = targets[1].input(InputContext::Target, source);
+    assert_eq!(function["parameters"]["source"], "((a, b))");
+    assert!(python::extract("def broken(:\n pass", &BTreeSet::from([TargetKind::File])).is_err());
+}

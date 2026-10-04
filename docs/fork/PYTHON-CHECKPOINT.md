@@ -2,6 +2,9 @@
 
 # Python milestone checkpoint
 
+This records the initial milestone. See [review corrections](PYTHON-REVIEW-FIXES.md)
+for corrected docstring handling, the precise grammar contract and current checks.
+
 Built on the reviewed C-fix checkpoint
 `6e9f39e4ea7e6305a68ff08c2c6d6a9bc40f84d7`, preserving Eriskii's upstream history,
 attribution and Rust defaults. Assembly remains unimplemented.
@@ -66,8 +69,9 @@ Private credentials and accounting stay outside this public repository.
 ## Limits and next step
 
 The exact parser contract is `tree-sitter-python` 0.25.0 with additional rejection
-of empty suites and Python 2 print/exec/backtick syntax. This is not full CPython
-conformance or runtime validation. UTF-8 `.py` sources only; no notebooks, stubs,
+of empty suites and Python 2 print/exec/backtick syntax. The permissive grammar
+also accepts other legacy Python 2 forms; acceptance is not Python 3 validation,
+full CPython conformance or runtime validation. UTF-8 `.py` sources only; no notebooks, stubs,
 bytecode, import/type resolution, dynamic execution or separate lambda targets.
 VS Code activation remains Rust-only. Extension-host testing remains unavailable
 without `code`; no hosted CI is configured. Independent Python review is next;

@@ -205,7 +205,7 @@ fn target(
         "return_annotation": field("return_type"), "type_parameters": field("type_parameters"),
         "bases": field("superclasses"), "body": field("body"),
         "analysis": { "completeness": "incomplete", "parser": "tree-sitter-python-0.25.0",
-            "syntax_contract": "pinned Python 3 grammar subset; not CPython conformance validation",
+            "syntax_contract": "permissive tree-sitter-python-0.25.0 grammar with explicit exclusions; accepts some legacy Python 2 syntax; not Python version or CPython conformance validation",
             "unknown": ["imports_not_loaded", "types_and_symbols_not_resolved", "decorators_and_metaclasses_not_evaluated", "dynamic_attributes_and_runtime_binding_unknown", "control_flow_not_evaluated"] }
     });
     Ok(Target::new(
