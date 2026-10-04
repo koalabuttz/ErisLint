@@ -64,6 +64,62 @@ fn v3_assembly_requires_explicit_implemented_profile_options_and_pairing() {
     }
 }
 #[test]
+fn invalid_declaring_assembly_sources_cannot_be_replaced_by_inheritance() {
+    let p = Project::new();
+    let valid = config(vec![asm_rule("a", "file")]);
+    for (field, value, expected) in [
+        ("slash_mode", Value::Null, "requires explicit slash_mode"),
+        ("files", json!([]), "at least one pattern"),
+        ("files", json!(["["]), "glob"),
+        ("profile", json!("mos-llvm-c64"), "not implemented"),
+    ] {
+        let mut base = valid.clone();
+        base["assembly_sources"][0][field] = value;
+        p.json("base.json", &base);
+        let mut child = valid.clone();
+        child["extends"] = json!(["base.json"]);
+        let e = error(Config::load(&p.json("erislint.json", &child)));
+        assert!(e.contains(expected), "{field}: {e}");
+        assert!(e.contains("base.json"), "{e}");
+        p.json("replacement.json", &valid);
+        let e = error(Config::load(&p.json(
+            "erislint.json",
+            &json!({"version":3,"extends":["base.json","replacement.json"]}),
+        )));
+        assert!(e.contains(expected), "{field}: {e}");
+    }
+    let mut base = valid.clone();
+    base["assembly_sources"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("slash_mode");
+    p.json("base.json", &base);
+    let mut child = valid;
+    child["extends"] = json!(["base.json"]);
+    assert!(
+        error(Config::load(&p.json("erislint.json", &child)))
+            .contains("requires explicit slash_mode")
+    );
+}
+
+#[test]
+fn valid_assembly_sources_can_be_inherited_replaced_and_paired_after_merge() {
+    let p = Project::new();
+    let mut base = config(vec![]);
+    p.json("base.json", &base);
+    let child = json!({"version":3,"extends":["base.json"],"rules":[asm_rule("a","file")]});
+    assert_eq!(p.config(child).assembly_sources.len(), 1);
+    base["rules"] = json!([asm_rule("a", "file")]);
+    p.json("base.json", &base);
+    let mut child = config(vec![]);
+    child["extends"] = json!(["base.json"]);
+    child["assembly_sources"][0]["slash_mode"] = json!("divide");
+    let c = p.config(child);
+    assert_eq!(c.assembly_sources[0].options.slash_mode, SlashMode::Divide);
+    assert!(c.rules["a"].origin.path.ends_with("base.json"));
+}
+
+#[test]
 fn uncertainty_is_required_only_for_assembly_and_policy_references_are_rejected() {
     let p = Project::new();
     for bad in [

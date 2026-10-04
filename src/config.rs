@@ -265,7 +265,7 @@ struct Merged {
     exclude: Option<Vec<String>>,
     c_files: Option<Vec<String>>,
     python_files: Option<Vec<String>>,
-    assembly_sources: Option<Vec<assembly::Source>>,
+    assembly_sources: Option<Vec<assembly::CompiledSource>>,
     origins: BTreeMap<String, RuleOrigin>,
     rules: BTreeMap<String, Rule>,
     overrides: Vec<Override>,
@@ -366,12 +366,7 @@ impl Config {
             .python_files
             .map(|files| FileFilter::new(&files, &[]))
             .transpose()?;
-        let assembly_sources = merged
-            .assembly_sources
-            .unwrap_or_default()
-            .into_iter()
-            .map(assembly::Source::compile)
-            .collect::<Result<Vec<_>>>()?;
+        let assembly_sources = merged.assembly_sources.unwrap_or_default();
         for rule in rules
             .values()
             .filter(|r| r.definition.r#where.language() == Language::Assembly)
@@ -496,6 +491,11 @@ fn merge(path: &Path, stack: &mut Vec<PathBuf>, merged: &mut Merged) -> Result<(
     if let Some(sources) = document.assembly_sources {
         ensure!(document.version == 3, "assembly_sources requires version 3");
         ensure!(!sources.is_empty(), "assembly_sources must not be empty");
+        let sources = sources
+            .into_iter()
+            .map(assembly::Source::compile)
+            .collect::<Result<Vec<_>>>()
+            .with_context(|| format!("invalid assembly_sources in {}", path.display()))?;
         merged.assembly_sources = Some(sources);
     }
     let mut rules: Vec<_> = document
