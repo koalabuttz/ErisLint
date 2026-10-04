@@ -13,7 +13,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{jev::Question, policy::DiagnosticPolicy, rust::TargetKind};
+use crate::{jev::Question, policy::DiagnosticPolicy, source::TargetKind};
 
 const CONFIG_NAME: &str = "erislint.json";
 

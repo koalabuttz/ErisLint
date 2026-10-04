@@ -8,3 +8,4 @@ pub mod output;
 pub mod policy;
 pub mod runner;
 pub mod rust;
+pub mod source;

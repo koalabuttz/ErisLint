@@ -18,7 +18,8 @@ use crate::{
     config::{Config, InputContext, RuleSetting},
     jev::{ChoiceAnswer, JevClient, Question, Request, Response},
     policy::Level,
-    rust::{self, Span, TargetKind},
+    rust,
+    source::{Span, TargetKind},
 };
 
 #[derive(Debug, Clone, Serialize)]

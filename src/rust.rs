@@ -10,25 +10,10 @@ use ra_ap_syntax::{
     ast::{self, HasTypeBounds},
     match_ast,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::config::InputContext;
-
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum TargetKind {
-    Function,
-    Struct,
-    Enum,
-    Trait,
-    Impl,
-    Module,
-    File,
-}
+// Preserve the original public import paths.
+pub use crate::source::{Span, Target, TargetKind};
 
 impl TargetKind {
     fn of(node: &SyntaxNode) -> Option<Self> {
@@ -42,41 +27,6 @@ impl TargetKind {
             SyntaxKind::SOURCE_FILE => Self::File,
             _ => return None,
         })
-    }
-}
-
-/// Byte offsets are zero-based, end-exclusive. Lines and Unicode columns are one-based.
-#[derive(Debug, Clone, Serialize)]
-pub struct Span {
-    pub start: usize,
-    pub end: usize,
-    pub line: usize,
-    pub column: usize,
-    pub end_line: usize,
-    pub end_column: usize,
-}
-
-pub struct Target {
-    pub kind: TargetKind,
-    pub name: String,
-    pub span: Span,
-    pub range: Span,
-    pub has_body: bool,
-    state: Value,
-    enclosing: Vec<Value>,
-}
-
-impl Target {
-    pub fn input(&self, context: InputContext, source: &str) -> Value {
-        let mut state = self.state.clone();
-        match context {
-            InputContext::Target => {}
-            InputContext::Enclosing => state["context"] = json!({ "enclosing": self.enclosing }),
-            InputContext::File => {
-                state["context"] = json!({ "enclosing": self.enclosing, "file": source })
-            }
-        }
-        state
     }
 }
 
@@ -125,15 +75,15 @@ pub fn extract(
                 .children()
                 .find_map(ast::Name::cast)
                 .map_or(node.text_range(), |name| name.syntax().text_range());
-            Ok(Target {
+            Ok(Target::new(
                 kind,
                 name,
+                lines.span(range),
+                lines.span(node.text_range()),
                 has_body,
-                span: lines.span(range),
-                range: lines.span(node.text_range()),
                 state,
-                enclosing: enclosing(&node),
-            })
+                enclosing(&node),
+            ))
         })
         .collect()
 }
