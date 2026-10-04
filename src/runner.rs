@@ -15,10 +15,10 @@ use ignore::WalkBuilder;
 use serde::Serialize;
 
 use crate::{
+    adapter::{Adapter, PreparedAdapter},
     config::{Config, InputContext, RuleSetting},
     jev::{ChoiceAnswer, JevClient, Question, Request, Response},
     policy::Level,
-    rust,
     source::{Span, TargetKind},
 };
 
@@ -133,11 +133,11 @@ impl Plan {
         let mut evaluations = Vec::new();
         let mut editions = BTreeMap::new();
         let mut sources = BTreeMap::new();
-        for path in &files {
+        for (path, adapter) in &files {
             let source = fs::read_to_string(path)
                 .with_context(|| format!("cannot read {}", path.display()))?;
-            let edition = if let Some(edition) = config.edition {
-                edition.into()
+            let prepared = if config.edition.is_some() {
+                adapter.prepare(path, config.edition)?
             } else {
                 let directory = path
                     .parent()
@@ -146,11 +146,11 @@ impl Plan {
                 match editions.entry(directory) {
                     std::collections::btree_map::Entry::Occupied(entry) => *entry.get(),
                     std::collections::btree_map::Entry::Vacant(entry) => {
-                        *entry.insert(rust::edition_for(path)?)
+                        *entry.insert(adapter.prepare(path, None)?)
                     }
                 }
             };
-            evaluations.extend(Self::source_evaluations(config, path, &source, edition)?);
+            evaluations.extend(Self::source_evaluations(config, path, &source, prepared)?);
             sources.insert(path.strip_prefix(&config.root)?.to_path_buf(), source);
         }
         Ok(Self {
@@ -168,21 +168,15 @@ impl Plan {
         let relative = path
             .strip_prefix(&config.root)
             .context("input is outside the configuration directory")?;
-        ensure!(
-            path.extension().is_some_and(|ext| ext == "rs"),
-            "editor input must be a Rust file"
-        );
+        let adapter = Adapter::for_path(&path).context("editor input must be a Rust file")?;
         let mut evaluations = Vec::new();
         if config.filter.matches(relative)
             && !relative
                 .components()
                 .any(|part| matches!(part.as_os_str().to_str(), Some("target" | ".git")))
         {
-            let edition = match config.edition {
-                Some(edition) => edition.into(),
-                None => rust::edition_for(&path)?,
-            };
-            evaluations = Self::source_evaluations(config, &path, source, edition)?;
+            let prepared = adapter.prepare(&path, config.edition)?;
+            evaluations = Self::source_evaluations(config, &path, source, prepared)?;
         }
         Ok(Self {
             files: 1,
@@ -212,7 +206,7 @@ impl Plan {
         config: &Config,
         path: &Path,
         source: &str,
-        edition: ra_ap_syntax::Edition,
+        adapter: PreparedAdapter,
     ) -> Result<Vec<Evaluation>> {
         let relative = path.strip_prefix(&config.root)?;
         let kinds = config
@@ -221,7 +215,8 @@ impl Plan {
             .map(|rule| rule.definition.r#where.kind)
             .collect();
         let mut evaluations = Vec::new();
-        for target in rust::extract(source, edition, &kinds)
+        for target in adapter
+            .extract(source, &kinds)
             .with_context(|| format!("cannot parse {}", relative.display()))?
         {
             let mut questions_by_context = BTreeMap::<InputContext, BTreeMap<_, _>>::new();
@@ -379,13 +374,13 @@ pub fn diagnostics(
         .collect()
 }
 
-fn source_files(config: &Config, paths: &[PathBuf]) -> Result<BTreeSet<PathBuf>> {
+fn source_files(config: &Config, paths: &[PathBuf]) -> Result<BTreeMap<PathBuf, Adapter>> {
     let roots = if paths.is_empty() {
         vec![config.root.clone()]
     } else {
         paths.to_vec()
     };
-    let mut files = BTreeSet::new();
+    let mut files = BTreeMap::new();
     for root in roots {
         let root = root
             .canonicalize()
@@ -406,14 +401,13 @@ fn source_files(config: &Config, paths: &[PathBuf]) -> Result<BTreeSet<PathBuf>>
             .filter_entry(|entry| !matches!(entry.file_name().to_str(), Some(".git" | "target")));
         for entry in walker.build() {
             let entry = entry.with_context(|| format!("cannot walk {}", root.display()))?;
-            if !entry.file_type().is_some_and(|kind| kind.is_file())
-                || entry
-                    .path()
-                    .extension()
-                    .is_none_or(|extension| extension != "rs")
-            {
+            if !entry.file_type().is_some_and(|kind| kind.is_file()) {
                 continue;
             }
+            // Select before canonicalization, preserving disk discovery order.
+            let Some(adapter) = Adapter::for_path(entry.path()) else {
+                continue;
+            };
             let path = entry.path().canonicalize()?;
             let relative = path.strip_prefix(&config.root)?;
             if !relative
@@ -421,7 +415,7 @@ fn source_files(config: &Config, paths: &[PathBuf]) -> Result<BTreeSet<PathBuf>>
                 .any(|part| matches!(part.as_os_str().to_str(), Some("target" | ".git")))
                 && config.filter.matches(relative)
             {
-                files.insert(path);
+                files.insert(path, adapter);
             }
         }
     }
