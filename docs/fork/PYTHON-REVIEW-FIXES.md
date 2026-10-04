@@ -41,7 +41,32 @@ questions across 21 Rust files; output matches the pristine upstream binary
 byte-for-byte on the same sources. Frozen Rust/C request fixtures and legacy
 schemas remain unchanged and passing.
 
-No live provider calls were made for these corrections. Previous live review
-results describe the prior implementation only. No thresholds were weakened.
+No live provider calls were made while implementing these corrections. The final
+bounded review below subsequently covered the two classification functions.
+Earlier live results describe the prior implementation only. No thresholds were weakened.
 VS Code activation remains Rust-only; extension-host testing remains unavailable
 without `code`, and no hosted CI is configured. No assembly work was started.
+
+## Final bounded live review
+
+After independent approval, the pristine binary from upstream
+`f04d016461b66b38d46647fb20762fb67bda350a` reviewed `python::docstring` and
+`python::single_expression` at exact fork commit
+`28045dbc227b791ae0dde1fbdf78f6c3c9fcd9da`. The original configuration and
+function-simplicity rule were unchanged. Exact function-name byte selection and
+one question per evaluation were verified offline before requests.
+
+The batch reserved up to four attempts per evaluation before sending. It completed
+two evaluations in two API calls with zero retries, warnings or errors. Model
+`jev-1.13.0` selected `simple` for both: confidence 0.92 for `docstring` and 0.51
+for `single_expression`. Both results were reviewed; the helper's tuple and trivia
+checks are required by the regression cases, and no code changes were warranted.
+No diagnostic false positives were identified.
+
+Coverage is limited to these two Rust classification functions. Test functions,
+the metadata wording correction and the whole tree were not live-reviewed in
+this batch. These judgments do not establish Python semantic correctness.
+All prior spending reservations remain retained; actual billed token usage is
+not exposed by the unchanged CLI. Private accounting remains outside this repo.
+This closeout changes documentation only, so the 81-test offline checkpoint above
+continues to describe the implementation. No further live calls were made.
