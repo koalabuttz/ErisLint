@@ -86,7 +86,14 @@ pub fn extract(source: &str, kinds: &BTreeSet<TargetKind>) -> Result<Vec<Target>
                     ));
                 }
             }
-            "declaration" => {
+            // Direct declaration children of a definition are old-style
+            // parameters, not function declarations. Block-scope declarations
+            // remain eligible because their parent is a compound statement.
+            "declaration"
+                if node
+                    .parent()
+                    .is_none_or(|parent| parent.kind() != "function_definition") =>
+            {
                 let mut cursor = node.walk();
                 for declarator in node.children_by_field_name("declarator", &mut cursor) {
                     if let Some(function) = function_name(declarator)?

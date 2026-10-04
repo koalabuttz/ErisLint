@@ -435,3 +435,49 @@ fn complete_c_example_requests_match_frozen_bytes() {
     assert!(output.stderr.is_empty());
     assert_eq!(output.stdout, include_bytes!("fixtures/c-example.json"));
 }
+
+#[test]
+fn old_style_parameter_declarations_are_not_function_targets() {
+    let source = "int invoke(callback)\nint callback(void);\n{ return callback(); }";
+    let targets = c::extract(source, &BTreeSet::from([TargetKind::Function])).unwrap();
+    assert_eq!(
+        targets
+            .iter()
+            .map(|target| target.name.as_str())
+            .collect::<Vec<_>>(),
+        ["invoke"]
+    );
+    let state = targets[0].input(InputContext::Target, source);
+    assert_eq!(state["source"], source);
+    assert_eq!(state["parameters"], "(callback)");
+    assert_eq!(state["analysis"]["completeness"], "incomplete");
+}
+
+#[test]
+fn parameter_context_does_not_hide_file_or_block_function_declarations() {
+    let project = Project::new();
+    let source = "int callback(void);\nint invoke(callback)\nint callback(void);\n{ int local(void); { extern int nested(void); } return callback(); }\nint modern(int parameter(void)) { return parameter(); }\n";
+    project.write("old_style.c", source);
+    let config = project.config(config(vec![c_rule("c", "function")]));
+    let plan = Plan::build(&config, &[]).unwrap();
+    assert_eq!(
+        plan.evaluations
+            .iter()
+            .map(|evaluation| evaluation.target.as_str())
+            .collect::<Vec<_>>(),
+        ["callback", "invoke", "local", "nested", "modern"]
+    );
+    assert_eq!(
+        plan.evaluations[0].location.span.start,
+        source.find("callback").unwrap()
+    );
+    assert_eq!(
+        plan.evaluations[1].request.state["source"],
+        "int invoke(callback)\nint callback(void);\n{ int local(void); { extern int nested(void); } return callback(); }"
+    );
+    assert_eq!(plan.evaluations[2].request.state["body"], Value::Null);
+    assert_eq!(
+        plan.evaluations[3].request.state["context"]["enclosing"][0]["kind"],
+        "function_definition"
+    );
+}
