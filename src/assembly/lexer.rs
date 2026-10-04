@@ -207,6 +207,11 @@ impl<'a> Scanner<'a> {
                     .find("*/")
                     .ok_or_else(|| anyhow::anyhow!("unterminated block comment at byte {start}"))?;
                 let e = start + 2 + relative + 2;
+                for at in start + 2..e - 2 {
+                    if self.bytes()[at] == b'\r' {
+                        self.eol_end(at)?;
+                    }
+                }
                 self.emit("comment", e, false);
             }
             b'/' if self.options.slash_mode == SlashMode::GasDefault => {
