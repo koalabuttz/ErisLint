@@ -32,10 +32,12 @@ language support described here is planned, not implemented or endorsed upstream
    import analyzed code. Dynamic imports, runtime types and metaprogramming stay
    unresolved. Gate on grammar/error fixtures, source offsets, nested/decorated
    definitions, language-specific metadata and mixed-language config tests.
-4. **One assembly scope.** Proposed initial scope: x86-64 GNU assembler, AT&T
-   syntax, unpreprocessed `.s` files, file and label/block targets. Document this
-   choice before implementation. Reject or flag Intel syntax, `.S` preprocessing,
-   macro expansion and other architectures as unsupported/incomplete. Do not
+4. **One assembly scope (decision pending).** Select one architecture, assembler
+   dialect, syntax and input mode before implementation. The earlier x86-64
+   GNU/AT&T proposal is not a selected target; i386 is a candidate requiring
+   explicit dialect and mode selection. Start with file and label/block targets.
+   Document accepted directives and preprocessing/macro limits; reject or flag
+   other modes and architectures as unsupported/incomplete. Do not
    infer function boundaries solely from labels, or claim ABI, control-flow or
    instruction correctness. Retain directives, labels, comments and raw operands.
    Expand only after focused fixtures and explicit review.

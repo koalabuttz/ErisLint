@@ -53,9 +53,13 @@ the first refactors rather than committing duplicated source into documentation.
 
 - VS Code extension-host tests were not run: the `code` executable is absent.
   Protocol tests passed; desktop integration and packaging were not validated.
-- Live self-lint was not run: no authorized managed Jev tool was exposed in this
-  session. Current pricing and an enforceable cumulative reservation mechanism
-  were not established. No live findings or false positives can be reported.
+- Live self-lint was not run. The tool catalog exposes no dedicated Jev tool;
+  this does not establish that a managed network-secret route is unavailable.
+  Network access is enabled, but the declared capabilities provide no Jev-specific
+  secret-injection route or usage contract. That route remains unverified;
+  credentials were not probed. Current pricing and an enforceable cumulative
+  reservation mechanism were not established. No live findings or false
+  positives can be reported.
 - Public fork creation was attempted through the authenticated GitHub CLI and
   returned HTTP 403, `Resource not accessible by integration`. No fork URL or
   remote documentation commit is verified. This local baseline remains useful,
