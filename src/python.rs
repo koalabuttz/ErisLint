@@ -102,7 +102,8 @@ fn decorated(node: Node<'_>) -> Node<'_> {
         .unwrap_or(node)
 }
 
-// Raw string-literal statement only; no decoding or runtime docstring inference.
+// Classify a standalone literal without decoding it. Record the original outer
+// expression separately from the unwrapped node used for classification.
 fn docstring(node: Node<'_>, source: &str, positions: &Positions<'_>) -> Option<Value> {
     let body = node.child_by_field_name("body").unwrap_or(node);
     let mut cursor = body.walk();
@@ -112,12 +113,16 @@ fn docstring(node: Node<'_>, source: &str, positions: &Positions<'_>) -> Option<
     if first.kind() != "expression_statement" {
         return None;
     }
-    let expression = first.named_child(0)?;
-    if !matches!(expression.kind(), "string" | "concatenated_string") {
+    let expression = single_expression(first)?;
+    let mut literal = expression;
+    while literal.kind() == "parenthesized_expression" {
+        literal = single_expression(literal)?;
+    }
+    if !matches!(literal.kind(), "string" | "concatenated_string") {
         return None;
     }
     // Bytes and interpolated strings are expressions, not Python docstrings.
-    if descendants(expression).iter().any(|n| {
+    if descendants(literal).iter().any(|n| {
         n.kind() == "string_start"
             && source[n.byte_range()]
                 .chars()
@@ -126,6 +131,21 @@ fn docstring(node: Node<'_>, source: &str, positions: &Positions<'_>) -> Option<
         return None;
     }
     Some(record(expression, source, positions))
+}
+
+// An unparenthesized tuple is represented by sibling expressions and commas,
+// including a single expression followed by a comma. Neither is a docstring.
+fn single_expression(node: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = node.walk();
+    if node.children(&mut cursor).any(|child| child.kind() == ",") {
+        return None;
+    }
+    let mut cursor = node.walk();
+    let mut children = node
+        .named_children(&mut cursor)
+        .filter(|child| !matches!(child.kind(), "comment" | "line_continuation"));
+    let expression = children.next()?;
+    children.next().is_none().then_some(expression)
 }
 
 fn target(

@@ -426,3 +426,89 @@ fn legacy_valid_rules_cannot_acquire_class_targets_or_python_defaults() {
     p.write("a.py", "def a(): pass\n");
     assert!(error(Plan::build(&c, &[])).contains("no configured source files"));
 }
+
+#[test]
+fn tuple_and_nonconstant_first_statements_are_not_docstrings_in_any_scope() {
+    for expression in [
+        "'not docs', 1",
+        "'not docs',",
+        "('not docs',)",
+        "('not docs', 1)",
+        "(('not docs',))",
+        "(
+ 'not docs',
+ 1
+)",
+        "b'bytes'",
+        "(b'bytes')",
+        "f'dynamic {value}'",
+        "(f'constant-looking')",
+        "((b'bytes'))",
+        "('text' f'interpolated')",
+        "'a' + 'b'",
+        "('a' + 'b')",
+        "str('not docs')",
+        "('text' b'bytes')",
+    ] {
+        for prefix in [
+            "",
+            "class Example:\n    ",
+            "def example():\n    ",
+            "class Host:\n    def method(self):\n        ",
+        ] {
+            let indent = prefix.rsplit('\n').next().unwrap();
+            let expression = expression.replace('\n', &format!("\n{indent}"));
+            let source = format!("{prefix}{expression}\n");
+            let targets = python::extract(
+                &source,
+                &BTreeSet::from([TargetKind::File, TargetKind::Class, TargetKind::Function]),
+            )
+            .unwrap();
+            let state = targets.last().unwrap().input(InputContext::Target, &source);
+            assert!(
+                state["docstring"].is_null(),
+                "{source}: {}",
+                state["docstring"]
+            );
+            assert!(state["source"].as_str().unwrap().contains(&expression));
+        }
+    }
+}
+
+#[test]
+fn parenthesized_literal_docstrings_preserve_raw_expression_in_any_scope() {
+    for expression in [
+        "('real docs')",
+        "((r'real docs'))",
+        "('one' 'two')",
+        "(
+ # retained comment
+ 'one'
+ 'two'
+)",
+        "(u'café 🦀')",
+        "'unchanged raw docs'",
+    ] {
+        for prefix in [
+            "",
+            "class Example:\n    ",
+            "def example():\n    ",
+            "class Host:\n    def method(self):\n        ",
+        ] {
+            let indent = prefix.rsplit('\n').next().unwrap();
+            let expression = expression.replace('\n', &format!("\n{indent}"));
+            let source = format!("{prefix}{expression}\n");
+            let targets = python::extract(
+                &source,
+                &BTreeSet::from([TargetKind::File, TargetKind::Class, TargetKind::Function]),
+            )
+            .unwrap();
+            let state = targets.last().unwrap().input(InputContext::Target, &source);
+            let doc = &state["docstring"];
+            assert_eq!(doc["source"], expression, "{source}");
+            let start = doc["span"]["start"].as_u64().unwrap() as usize;
+            let end = doc["span"]["end"].as_u64().unwrap() as usize;
+            assert_eq!(&source[start..end], expression);
+        }
+    }
+}
