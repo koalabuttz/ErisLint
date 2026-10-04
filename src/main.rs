@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Result, anyhow};
 use clap::{Parser, ValueEnum};
 use erislint::{
-    config::{Config, ConfigFile, RuleFile, legacy},
+    config::{Config, legacy, v2},
     jev::JevClient,
     output::{TextOptions, TextStyle, write_text},
     runner::Plan,
@@ -101,8 +101,8 @@ async fn run(cli: Cli) -> Result<u8> {
         let schema = match kind {
             SchemaKind::Config => schemars::schema_for!(legacy::ConfigFile),
             SchemaKind::Rule => schemars::schema_for!(legacy::RuleFile),
-            SchemaKind::ConfigV2 => schemars::schema_for!(ConfigFile),
-            SchemaKind::RuleV2 => schemars::schema_for!(RuleFile),
+            SchemaKind::ConfigV2 => schemars::schema_for!(v2::ConfigFile),
+            SchemaKind::RuleV2 => schemars::schema_for!(v2::RuleFile),
         };
         write_json(&schema)?;
         return Ok(0);

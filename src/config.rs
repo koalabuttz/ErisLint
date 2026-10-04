@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use crate::{jev::Question, policy::DiagnosticPolicy, source::TargetKind};
 
 pub mod legacy;
+pub mod v2;
 
 const CONFIG_NAME: &str = "erislint.json";
 
