@@ -45,6 +45,9 @@ These public-source observations were checked on 2026-10-04; they do not identif
 an installed toolchain version. Pin the implementation's fixture reference revision
 and lexical contract independently of a user's actual assembler version.
 
+For exact lexical, precedence, region and uncertainty decisions, the
+[reviewed contract details](ASSEMBLY-CONTRACT-DETAILS.md) are normative.
+
 ## Input and selection contract
 
 Start with standalone UTF-8 `.s` and `.S` only. Require explicit profile/file
@@ -135,8 +138,9 @@ not a callable routine, basic block or control-flow boundary.
 
 Require nonempty regions, unique names, matching pairs and no nesting. Recognize
 markers only as standalone comment lines outside strings and captured macro bodies.
-Keep preprocessor/assembler conditional ancestry in context without deciding branch
-activity. Fixtures must settle exact marker/newline ownership before implementation.
+Keep essential preprocessor/assembler conditional ancestry in base analysis state
+even for `context: target`, without deciding branch activity. Exact marker grammar,
+newline ownership and spans are specified in the contract details.
 Labels, repeated numeric labels, `.type`/`.size`, section records and macro headers
 are metadata inside regions; none automatically creates a function target. Later
 explicit region schemes can be added after review, without changing this meaning.
@@ -145,7 +149,8 @@ No claims about instruction legality, CPU correctness, undocumented opcodes, cyc
 timing, stack effects, ABI, branch displacement, macro expansion, object layout,
 linker placement or C64 memory-mapped behavior are supported. Any future claim
 needs an explicit model and independently tested evidence. Source-level model
-judgments remain review leads with an uncertainty answer available.
+judgments remain review leads. Assembly-only uncertainty validation and fixed
+inconclusive-warning semantics are specified in the contract details.
 
 ## Implementation stages after design approval
 
