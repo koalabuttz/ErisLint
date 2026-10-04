@@ -239,13 +239,17 @@ impl<'a> Scanner<'a> {
         }
         Ok(())
     }
-    fn escaped(&self, at: usize) -> Result<usize> {
+    fn escaped(&self, at: usize, single_quote: bool) -> Result<usize> {
         ensure!(
             self.bytes().get(at + 1).is_some_and(|b| matches!(
                 b,
                 b'\\' | b'\'' | b'"' | b'b' | b'f' | b'n' | b'r' | b't'
             )),
             "unsupported escape at byte {at}"
+        );
+        ensure!(
+            single_quote || self.bytes()[at + 1] != b'\'',
+            "unsupported single-quote escape in string at byte {at}"
         );
         Ok(at + 2)
     }
@@ -254,7 +258,7 @@ impl<'a> Scanner<'a> {
         while i < self.bytes().len() {
             match self.bytes()[i] {
                 b'"' => return Ok(i + 1),
-                b'\\' => i = self.escaped(i)?,
+                b'\\' => i = self.escaped(i, false)?,
                 b'\r' | b'\n' => bail!("unsupported newline in string at byte {i}"),
                 _ => i += self.text.source[i..].chars().next().unwrap().len_utf8(),
             }
@@ -268,7 +272,7 @@ impl<'a> Scanner<'a> {
             .get(i)
             .ok_or_else(|| anyhow::anyhow!("unterminated character at byte {}", self.pos))?;
         let end = if c == b'\\' {
-            self.escaped(i)?
+            self.escaped(i, true)?
         } else {
             ensure!(
                 (b' '..=b'~').contains(&c),
