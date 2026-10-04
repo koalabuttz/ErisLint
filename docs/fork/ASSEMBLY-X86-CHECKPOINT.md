@@ -57,6 +57,29 @@ unavailable without `code`.
 
 ## Limits and next gate
 
+### Independent review fixes
+
+Two offline reproductions exposed gaps after the initial checkpoint. An invalid
+base document's assembly options could disappear when a child replaced them;
+source entries now compile under each declaring document before replacement,
+with its path included in errors. Final source/rule pairing still occurs after
+merge, so valid split declarations and replacements remain supported. Tests
+cover omitted/null slash mode, empty patterns, invalid globs and unsupported
+profiles in replaced bases, including later sibling replacement. Frozen legacy
+error fixtures remain unchanged.
+
+Block comments could hide a bare carriage return. Their bodies now use the
+existing CRLF validation before record emission. Regressions cover bare CR in
+comments and at neighboring boundaries, accepted CRLF, adjacent tokens and
+opaque continued CPP records. Both regressions failed before their fixes.
+
+After these fixes, all 107 Rust tests (26 assembly tests), six protocol tests,
+formatting and strict Clippy pass. Offline self-lint validates the original
+configuration and constructs 257 questions across 27 files, matching pristine
+upstream request bytes on the same sources. No live calls were made.
+
+### Remaining scope
+
 This is a bounded source-review scanner, not a GAS parser or instruction
 validator. Assembler acceptance, symbol/operand resolution, macro/CPP expansion,
 CPU behavior, linking and runtime correctness remain unknown. Labels are not
