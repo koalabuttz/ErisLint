@@ -32,13 +32,14 @@ language support described here is planned, not implemented or endorsed upstream
    import analyzed code. Dynamic imports, runtime types and metaprogramming stay
    unresolved. Gate on grammar/error fixtures, source offsets, nested/decorated
    definitions, language-specific metadata and mixed-language config tests.
-4. **Assembly framework with two explicit profiles (design review).** The selected
+4. **Assembly framework with two explicit profiles (staged implementation).** The selected
    interests are 32-bit x86 GNU/AT&T and LLVM-MOS generic syntax for C64/6510
    source review. Use one shared framework with distinct CPU/dialect profiles,
    standalone `.s`/`.S` inputs and explicit preprocessing intent. Embedded Rust
    assembly is deferred. See [the proposed contract](ASSEMBLY-DESIGN.md) and
-   [fixture matrix](ASSEMBLY-FIXTURES.md). Neither profile is implemented; review
-   the contract before parser work. Labels do not imply functions, and source
+   [fixture matrix](ASSEMBLY-FIXTURES.md). The first x86 implementation is recorded
+   in [its checkpoint](ASSEMBLY-X86-CHECKPOINT.md); LLVM-MOS remains unimplemented
+   and requires a separate review gate. Labels do not imply functions, and source
    review does not establish assembler acceptance or CPU correctness.
 
 Each stage must pass the unchanged Rust suite plus its own contract tests before

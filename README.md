@@ -392,7 +392,15 @@ functions, async functions and methods. See the [Python example](examples/python
 and [Python contract](docs/fork/PYTHON-DESIGN.md). Set both `python_files` and
 `where.language: "python"` in version 2, with global `include` patterns that cover
 those files. No Python code is executed or imported; parser and dynamic-context
-limitations remain explicit. Assembly support is not implemented.
+limitations remain explicit.
+
+Version 3 adds bounded standalone x86 GAS AT&T 32-bit assembly source review,
+with explicit preprocessing and slash modes, file targets and marked regions.
+See the [assembly example](examples/assembly/README.md) and
+[implementation checkpoint](docs/fork/ASSEMBLY-X86-CHECKPOINT.md). This preserves
+source and unresolved context; it does not validate instructions or execute an
+assembler/preprocessor. LLVM-MOS remains unimplemented. Generate the new schemas
+with `--schema config-v3` and `--schema rule-v3`; older schemas remain unchanged.
 
 ## License
 
