@@ -113,6 +113,26 @@ impl Response {
                 answer.probabilities.keys().eq(choices.keys()),
                 "Jev returned missing or unexpected probabilities for {id}"
             );
+            // Fork-specific validation. The API requires normalized probabilities
+            // but does not specify wire rounding. Allow half a percentage point
+            // per option, capped at two points total so large choice sets cannot
+            // make normalization meaningless. This is a client compatibility
+            // allowance, not a claim about provider precision.
+            let sum: f64 = answer.probabilities.values().map(|p| p.get()).sum();
+            let tolerance = (0.005 * choices.len() as f64).min(0.02);
+            ensure!(
+                (sum - 1.0).abs() <= tolerance + 1e-12,
+                "invalid Jev response for {id}: probabilities sum to {sum}, expected 1 within {tolerance}"
+            );
+            let selected = answer.probabilities[&answer.choice];
+            ensure!(
+                answer.probabilities.values().all(|&p| p <= selected),
+                "invalid Jev response for {id}: selected choice {:?} is not a maximum reported probability",
+                answer.choice
+            );
+            // Any tied maximum is valid. Do not replace a choice, normalize the
+            // distribution, or recompute confidence: its wire precision is not
+            // specified, and policies intentionally consume the returned value.
         }
         Ok(())
     }

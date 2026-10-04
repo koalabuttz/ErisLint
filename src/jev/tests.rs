@@ -230,3 +230,129 @@ async fn interrupted_response_bodies_are_retried() {
     client.evaluate(&request()).await.unwrap();
     responder.join().unwrap();
 }
+
+// Fork-specific response consistency regressions; all fixtures are synthetic.
+fn distribution_request(size: usize) -> Request {
+    let mut request = request();
+    let Question::Choice { criteria, .. } = request.questions.get_mut("quality").unwrap();
+    *criteria = (0..size)
+        .map(|i| (format!("option{i}"), format!("Option {i}")))
+        .collect();
+    request
+}
+
+fn distribution_answer(values: &[f64], selected: usize, confidence: f64) -> Value {
+    let probabilities: BTreeMap<_, _> = values
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (format!("option{i}"), *p))
+        .collect();
+    json!({"model":"jev-test", "answers":{"quality":{
+        "type":"choice", "choice":format!("option{selected}"),
+        "confidence":confidence, "probabilities":probabilities
+    }}})
+}
+
+#[tokio::test]
+async fn inconsistent_distributions_fail_without_retry_or_label_repair() {
+    // Five close but strictly nonmaximum selections, plus unnormalized answers.
+    for (values, selected, confidence, reason) in [
+        (vec![0.44, 0.45, 0.02, 0.09], 0, 0.27, "not a maximum"),
+        (vec![0.01, 0.0, 0.50, 0.49], 3, 0.33, "not a maximum"),
+        (vec![0.48, 0.0, 0.47, 0.05], 2, 0.30, "not a maximum"),
+        (vec![0.18, 0.09, 0.36, 0.37], 2, 0.15, "not a maximum"),
+        (vec![0.33, 0.32, 0.30, 0.05], 1, 0.09, "not a maximum"),
+        (vec![0.7, 0.7], 0, 0.4, "probabilities sum"),
+        (vec![0.0; 255], 0, 0.0, "probabilities sum"),
+        (vec![1.0; 255], 0, 1.0, "probabilities sum"),
+    ] {
+        let server =
+            server(vec![ResponseTemplate::new(200).set_body_json(
+                distribution_answer(&values, selected, confidence),
+            )])
+            .await;
+        let client = JevClient::at_endpoint("test-key", &server.uri()).unwrap();
+        let error = client
+            .evaluate(&distribution_request(values.len()))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains(reason), "{error:#}");
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn rounded_distributions_and_any_tied_maximum_preserve_returned_fields() {
+    for (values, selected, confidence) in [
+        (vec![0.33, 0.33, 0.33], 2, 0.0),
+        (vec![0.34, 0.34, 0.33], 1, 0.01),
+        (vec![0.17; 6], 5, 0.0),
+        (vec![0.5, 0.5, 0.0, 0.0], 1, 0.33),
+        (vec![0.5000001, 0.4999999], 0, 0.0),
+        (vec![1.0, 0.0], 0, 1.0),
+    ] {
+        let original = distribution_answer(&values, selected, confidence);
+        let response: Response = serde_json::from_value(original.clone()).unwrap();
+        response
+            .validate(&distribution_request(values.len()))
+            .unwrap();
+        assert_eq!(
+            json!(response.answers["quality"]),
+            original["answers"]["quality"]
+        );
+    }
+    // The cap must not grow without bound with the number of options.
+    let response: Response =
+        serde_json::from_value(distribution_answer(&[0.18; 6], 0, 0.0)).unwrap();
+    assert!(response.validate(&distribution_request(6)).is_err());
+    // Rounding tolerance applies to sums only, never to a strict ranking reversal.
+    let response: Response =
+        serde_json::from_value(distribution_answer(&[0.5000001, 0.4999999], 1, 0.0)).unwrap();
+    assert!(response.validate(&distribution_request(2)).is_err());
+}
+
+#[tokio::test]
+async fn missing_malformed_and_out_of_range_fields_fail_without_retry() {
+    let mut replies = Vec::new();
+    for field in ["type", "choice", "confidence", "probabilities"] {
+        let mut value = answer();
+        value["answers"]["quality"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        replies.push(value);
+    }
+    for (pointer, value) in [
+        ("/answers/quality/type", json!("score")),
+        ("/answers/quality/choice", json!(null)),
+        ("/answers/quality/confidence", json!("NaN")),
+        ("/answers/quality/confidence", json!(-0.01)),
+        ("/answers/quality/confidence", json!(1.01)),
+        ("/answers/quality/probabilities/clear", json!(null)),
+        ("/answers/quality/probabilities/clear", json!("0.9")),
+        ("/answers/quality/probabilities/clear", json!(-0.01)),
+        ("/answers/quality/probabilities/clear", json!(1.01)),
+        ("/answers/quality/probabilities", json!({"clear":1.0})),
+        (
+            "/answers/quality/probabilities",
+            json!({"clear":0.9,"unclear":0.1,"extra":0.0}),
+        ),
+    ] {
+        let mut response = answer();
+        *response.pointer_mut(pointer).unwrap() = value;
+        replies.push(response);
+    }
+    for reply in replies {
+        let server = server(vec![ResponseTemplate::new(200).set_body_json(reply)]).await;
+        let client = JevClient::at_endpoint("test-key", &server.uri()).unwrap();
+        assert!(client.evaluate(&request()).await.is_err());
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(Probability::try_from(value).is_err());
+    }
+    for literal in ["NaN", "Infinity", "1e999"] {
+        let raw = answer().to_string().replace("0.9", literal);
+        assert!(serde_json::from_str::<Response>(&raw).is_err());
+    }
+}

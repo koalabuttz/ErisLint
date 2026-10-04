@@ -402,6 +402,15 @@ fn malformed_or_incomplete_responses_cannot_silently_pass() {
         mutate("/answers/quality/confidence", json!(1.1)),
         mutate("/answers/quality/probabilities", json!({"bad": 1.0})),
         mutate("/answers/quality/probabilities/good", json!(1.1)),
+        mutate(
+            "/answers/quality/probabilities",
+            json!({"good":0.1,"bad":0.4,"unknown":0.1}),
+        ),
+        mutate(
+            "/answers/quality/probabilities",
+            json!({"good":0.6,"bad":0.8,"unknown":0.2}),
+        ),
+        mutate("/answers/quality/choice", json!("good")),
     ] {
         let result = serde_json::from_value::<Response>(bad)
             .map_err(anyhow::Error::from)
@@ -418,9 +427,9 @@ fn preserves_reported_choices_and_probabilities_without_normalizing() {
     let plan = Plan::build(&config, &[]).unwrap();
     let evaluation = &plan.evaluations[0];
     for (choice, probabilities) in [
-        ("bad", json!({ "good": 0.1, "bad": 0.4, "unknown": 0.1 })),
-        ("bad", json!({ "good": 0.6, "bad": 0.8, "unknown": 0.2 })),
-        ("good", json!({ "good": 0.08, "bad": 0.9, "unknown": 0.02 })),
+        ("bad", json!({ "good": 0.33, "bad": 0.34, "unknown": 0.33 })),
+        ("bad", json!({ "good": 0.33, "bad": 0.33, "unknown": 0.33 })),
+        ("good", json!({ "good": 0.9, "bad": 0.08, "unknown": 0.02 })),
     ] {
         let mut value = response("quality", 0.9);
         value["answers"]["quality"]["choice"] = json!(choice);
