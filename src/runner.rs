@@ -174,19 +174,24 @@ impl Plan {
         let relative = path
             .strip_prefix(&config.root)
             .context("input is outside the configuration directory")?;
-        let adapter = Adapter::for_path(&path, config)?.context(if config.c_filter.is_some() {
-            "editor input must be a configured Rust or C file"
-        } else {
-            "editor input must be a Rust file"
-        })?;
-        let mut evaluations = Vec::new();
-        if config.filter.matches(relative)
+        let included = config.filter.matches(relative)
             && !relative
                 .components()
-                .any(|part| matches!(part.as_os_str().to_str(), Some("target" | ".git")))
-        {
-            let prepared = adapter.prepare(&path, config.edition)?;
-            evaluations = Self::source_evaluations(config, &path, source, prepared)?;
+                .any(|part| matches!(part.as_os_str().to_str(), Some("target" | ".git")));
+        let mut evaluations = Vec::new();
+        // An out-of-scope snapshot must not be validated as C merely because
+        // c_files is broad. Keep legacy Rust extension/error ordering intact.
+        if included || config.c_filter.is_none() {
+            let adapter =
+                Adapter::for_path(&path, config)?.context(if config.c_filter.is_some() {
+                    "editor input must be a configured Rust or C file"
+                } else {
+                    "editor input must be a Rust file"
+                })?;
+            if included {
+                let prepared = adapter.prepare(&path, config.edition)?;
+                evaluations = Self::source_evaluations(config, &path, source, prepared)?;
+            }
         }
         Ok(Self {
             files: 1,
@@ -428,6 +433,15 @@ fn source_files(config: &Config, paths: &[PathBuf]) -> Result<BTreeMap<PathBuf, 
         for entry in walker.build() {
             let entry = entry.with_context(|| format!("cannot walk {}", root.display()))?;
             if !entry.file_type().is_some_and(|kind| kind.is_file()) {
+                continue;
+            }
+            // Global scope takes precedence over broad C-mode selection. The
+            // legacy Rust-only discovery path retains its original ordering.
+            if config.c_filter.is_some()
+                && !config
+                    .filter
+                    .matches(entry.path().strip_prefix(&config.root)?)
+            {
                 continue;
             }
             // Select before canonicalization, preserving disk discovery order.

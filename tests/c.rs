@@ -530,3 +530,63 @@ fn editor_file_target_uses_complete_unsaved_source_and_span() {
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "int saved;");
 }
+
+#[test]
+fn global_scope_filters_broad_c_globs_before_extension_validation() {
+    let project = Project::new();
+    let good = project.write("src/good.c", "int good(void) { return 1; }");
+    let ignored = project.write("src/ignored.cpp", "class Ignored {};");
+    let nonincluded = project.write("src/notes.txt", "not C source");
+    let mut value = config(vec![c_rule("c", "function")]);
+    value["c_files"] = json!(["src/**"]);
+    value["include"] = json!(["src/**/*.c"]);
+    value["exclude"] = json!(["src/ignored.cpp"]);
+    let config = project.config(value);
+    let plan = Plan::build(&config, &[]).unwrap();
+    assert_eq!(plan.files, 1);
+    assert_eq!(plan.evaluations[0].target, "good");
+    assert_eq!(
+        serde_json::to_vec(
+            &Plan::build(&config, &[ignored.clone(), good, nonincluded.clone()]).unwrap()
+        )
+        .unwrap(),
+        serde_json::to_vec(&plan).unwrap()
+    );
+    for path in [ignored, nonincluded] {
+        let snapshot = Plan::from_source(&config, &path, "not valid C {").unwrap();
+        assert_eq!(snapshot.files, 1);
+        assert!(snapshot.evaluations.is_empty());
+        assert_eq!(
+            snapshot.source(path.strip_prefix(project.root()).unwrap()),
+            Some("not valid C {")
+        );
+    }
+    let missing = project.root().join("src/missing.cpp");
+    assert!(error(Plan::from_source(&config, &missing, "")).starts_with("cannot open input"));
+}
+
+#[test]
+fn explicitly_excluded_cpp_is_ignored_but_selected_cpp_still_fails() {
+    let project = Project::new();
+    project.write("src/good.c", "int good(void) { return 1; }");
+    let cpp = project.write("src/ignored.cpp", "class Ignored {};");
+    let mut value = config(vec![c_rule("c", "function")]);
+    value["c_files"] = json!(["src/**"]);
+    value["include"] = json!(["src/**"]);
+    value["exclude"] = json!(["src/ignored.cpp"]);
+    let excluded = project.config(value.clone());
+    assert_eq!(Plan::build(&excluded, &[]).unwrap().files, 1);
+    assert!(
+        Plan::from_source(&excluded, &cpp, "not C")
+            .unwrap()
+            .evaluations
+            .is_empty()
+    );
+    value["exclude"] = json!([]);
+    let selected = project.config(value);
+    assert!(error(Plan::build(&selected, &[])).contains("unsupported extension"));
+    assert!(
+        error(Plan::build(&selected, std::slice::from_ref(&cpp))).contains("unsupported extension")
+    );
+    assert!(error(Plan::from_source(&selected, &cpp, "not C")).contains("unsupported extension"));
+}
