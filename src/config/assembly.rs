@@ -20,15 +20,6 @@ pub enum Profile {
     X86GasAtt32,
     MosLlvmC64,
 }
-impl Profile {
-    pub fn validate(self) -> Result<()> {
-        ensure!(
-            self == Self::X86GasAtt32,
-            "assembly profile mos-llvm-c64 is not implemented"
-        );
-        Ok(())
-    }
-}
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, JsonSchema,
 )]
@@ -52,7 +43,23 @@ pub enum SlashMode {
 pub struct Options {
     pub profile: Profile,
     pub preprocessing: Preprocessing,
-    pub slash_mode: SlashMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slash_mode: Option<SlashMode>,
+}
+impl Options {
+    pub fn validate(self) -> Result<()> {
+        match self.profile {
+            Profile::X86GasAtt32 => ensure!(
+                self.slash_mode.is_some(),
+                "x86-gas-att32 requires explicit slash_mode"
+            ),
+            Profile::MosLlvmC64 => ensure!(
+                self.slash_mode.is_none(),
+                "mos-llvm-c64 does not accept GAS slash_mode"
+            ),
+        }
+        Ok(())
+    }
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -68,29 +75,26 @@ pub struct CompiledSource {
 }
 impl Source {
     pub fn compile(self) -> Result<CompiledSource> {
-        self.profile.validate()?;
         ensure!(
             !self.files.is_empty(),
             "assembly files must contain at least one pattern"
         );
-        let slash_mode = self
-            .slash_mode
-            .ok_or_else(|| anyhow::anyhow!("x86-gas-att32 requires explicit slash_mode"))?;
+        let options = Options {
+            profile: self.profile,
+            preprocessing: self.preprocessing,
+            slash_mode: self.slash_mode,
+        };
+        options.validate()?;
         Ok(CompiledSource {
             filter: FileFilter::new(&self.files, &[])?,
-            options: Options {
-                profile: self.profile,
-                preprocessing: self.preprocessing,
-                slash_mode,
-            },
+            options,
         })
     }
 }
 pub fn validate_rule(rule: &Rule) -> Result<()> {
     rule.r#where
         .profile
-        .ok_or_else(|| anyhow::anyhow!("assembly rule requires explicit profile"))?
-        .validate()?;
+        .ok_or_else(|| anyhow::anyhow!("assembly rule requires explicit profile"))?;
     ensure!(
         rule.question
             .choices()

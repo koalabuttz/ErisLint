@@ -5,7 +5,7 @@ pub mod text;
 pub mod lexer;
 
 use crate::{
-    config::assembly::Options,
+    config::assembly::{Options, Profile},
     source::{Target, TargetKind},
 };
 use anyhow::{Result, ensure};
@@ -70,8 +70,18 @@ fn state(options: Options, parsed: &lexer::Parsed<'_>, body: &Record<'_>) -> Val
     let records: Vec<_> = parsed.records.iter().filter(contained).collect();
     let statements: Vec<_> = parsed.statements.iter().filter(contained).collect();
     let issues:Vec<_>=parsed.statements.iter().filter(|r|r.kind=="opaque_statement"||r.kind=="directive").map(|r|json!({"reason":if r.kind=="directive" {"directive_not_evaluated"} else {"statement_or_macro_not_resolved"},"span":r.span})).collect();
-    json!({"language":"assembly","kind":"file","name":null,"source":body.source,"records":records,"statements":statements,
-        "analysis":{"completeness":"incomplete","parser":"erislint-bounded-assembly-v1","profile":options.profile,"cpu_intent":"i386-compatible 32-bit; not validated","options":options,
+    let cpu_intent = match options.profile {
+        Profile::X86GasAtt32 => "i386-compatible 32-bit; not validated",
+        Profile::MosLlvmC64 => "C64/6510 intent; not a validated LLVM CPU or feature selection",
+    };
+    let mut state = json!({"language":"assembly","kind":"file","name":null,"source":body.source,"records":records,"statements":statements,
+        "analysis":{"completeness":"incomplete","parser":"erislint-bounded-assembly-v1","profile":options.profile,"cpu_intent":cpu_intent,"options":options,
             "preprocessing":"raw source only; never executed","dependency_scope":"conservative file-wide; relevance unresolved","dependencies":parsed.dependencies,"issues":issues,
-            "unknown":["macro_expansion_unknown","conditional_activity_unknown","assembler_state_unknown","symbols_and_relocations_unresolved","instruction_legality_and_cpu_semantics_not_validated","layout_timing_stack_and_abi_unknown"]}})
+            "unknown":["macro_expansion_unknown","conditional_activity_unknown","assembler_state_unknown","symbols_and_relocations_unresolved","instruction_legality_and_cpu_semantics_not_validated","layout_timing_stack_and_abi_unknown"]}});
+    if options.profile == Profile::MosLlvmC64 {
+        state["analysis"]["dialect"] = json!("LLVM-MOS generic bounded source subset");
+        state["analysis"]["validated_cpu_features"] = json!([]);
+        state["analysis"]["reference_revision"] = json!("06bc967d2668c7c11c4d6eb43a6aed1f99ad258b");
+    }
+    state
 }

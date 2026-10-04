@@ -1,7 +1,7 @@
-// Fork-specific bounded GAS/AT&T32 tokenizer. Not an assembler validator.
+// Fork-specific bounded GAS/AT&T32 and LLVM-MOS tokenizer. Not an assembler validator.
 // SPDX-License-Identifier: AGPL-3.0-only
 use super::text::{Record, Text};
-use crate::config::assembly::{Options, Preprocessing, SlashMode};
+use crate::config::assembly::{Options, Preprocessing, Profile, SlashMode};
 use anyhow::{Result, bail, ensure};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -45,6 +45,7 @@ struct Scanner<'a> {
     options: Options,
     pos: usize,
     line_start: usize,
+    statement_start: bool,
     records: Vec<Record<'a>>,
     statements: Vec<Record<'a>>,
     dependencies: Vec<Record<'a>>,
@@ -56,12 +57,13 @@ struct Scanner<'a> {
 }
 
 pub fn tokenize(source: &str, options: Options) -> Result<Parsed<'_>> {
-    options.profile.validate()?;
+    options.validate()?;
     let mut scan = Scanner {
         text: Text::new(source),
         options,
         pos: 0,
         line_start: 0,
+        statement_start: true,
         records: vec![],
         statements: vec![],
         dependencies: vec![],
@@ -141,6 +143,11 @@ impl<'a> Scanner<'a> {
         }
     }
     fn emit(&mut self, kind: &'static str, end: usize, code: bool) {
+        match kind {
+            "whitespace" => {}
+            "newline" | "cpp" => self.statement_start = true,
+            _ => self.statement_start = false,
+        }
         if code {
             self.code.push((self.pos, end));
         }
@@ -153,6 +160,7 @@ impl<'a> Scanner<'a> {
     fn next(&mut self) -> Result<()> {
         let start = self.pos;
         let b = self.bytes()[start];
+        let mos = self.options.profile == Profile::MosLlvmC64;
         let end = self.line_end(start);
         let standalone = self.bytes()[self.line_start..start]
             .iter()
@@ -184,6 +192,12 @@ impl<'a> Scanner<'a> {
                 let e = self.eol_end(start)?;
                 self.emit("newline", e, false);
             }
+            b';' if mos => {
+                if standalone {
+                    self.marker(end)?;
+                }
+                self.emit("comment", end, false);
+            }
             b';' => {
                 self.flush()?;
                 self.emit("separator", start + 1, false);
@@ -196,8 +210,8 @@ impl<'a> Scanner<'a> {
                 let e = self.character()?;
                 self.emit("character", e, true);
             }
-            b'#' => {
-                if standalone {
+            b'#' if !mos || self.statement_start => {
+                if !mos && standalone {
                     self.marker(end)?;
                 }
                 self.emit("comment", end, false);
@@ -214,7 +228,10 @@ impl<'a> Scanner<'a> {
                 }
                 self.emit("comment", e, false);
             }
-            b'/' if self.options.slash_mode == SlashMode::GasDefault => {
+            b'/' if mos && self.bytes().get(start + 1) == Some(&b'/') => {
+                self.emit("comment", end, false)
+            }
+            b'/' if self.options.slash_mode == Some(SlashMode::GasDefault) => {
                 self.emit("comment", end, false)
             }
             b'/' if self.bytes().get(start + 1) == Some(&b'/') => {
@@ -280,12 +297,20 @@ impl<'a> Scanner<'a> {
             self.escaped(i, true)?
         } else {
             ensure!(
-                (b' '..=b'~').contains(&c),
+                (b' '..=b'~').contains(&c)
+                    && (self.options.profile != Profile::MosLlvmC64 || c != b'\''),
                 "unsupported character literal at byte {}",
                 self.pos
             );
             i + 1
         };
+        if self.options.profile == Profile::MosLlvmC64 {
+            ensure!(
+                self.bytes().get(end) == Some(&b'\''),
+                "MOS character requires one byte and a closing quote at byte {end}"
+            );
+            return Ok(end + 1);
+        }
         ensure!(
             self.bytes().get(end).is_none_or(|b| horizontal(*b)
                 || matches!(
@@ -398,6 +423,8 @@ impl<'a> Scanner<'a> {
         }
         let head = &self.text.source[code[index].0..code[index].1];
         let forbidden = (head.starts_with(".code") && head != ".code32")
+            || (self.options.profile == Profile::MosLlvmC64
+                && matches!(head, ".code32" | ".att_syntax"))
             || matches!(
                 head,
                 ".code16"

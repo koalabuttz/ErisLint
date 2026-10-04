@@ -49,7 +49,7 @@ fn v3_assembly_requires_explicit_implemented_profile_options_and_pairing() {
         v["assembly_sources"][0]["profile"] = json!(profile);
         let e = error(Config::load(&p.json("erislint.json", &v)));
         if profile == "mos-llvm-c64" {
-            assert!(e.contains("not implemented"));
+            assert!(e.contains("does not accept GAS slash_mode"));
         }
     }
     for field in ["assembly_sources", "rules"] {
@@ -71,7 +71,11 @@ fn invalid_declaring_assembly_sources_cannot_be_replaced_by_inheritance() {
         ("slash_mode", Value::Null, "requires explicit slash_mode"),
         ("files", json!([]), "at least one pattern"),
         ("files", json!(["["]), "glob"),
-        ("profile", json!("mos-llvm-c64"), "not implemented"),
+        (
+            "profile",
+            json!("mos-llvm-c64"),
+            "does not accept GAS slash_mode",
+        ),
     ] {
         let mut base = valid.clone();
         base["assembly_sources"][0][field] = value;
@@ -115,7 +119,10 @@ fn valid_assembly_sources_can_be_inherited_replaced_and_paired_after_merge() {
     child["extends"] = json!(["base.json"]);
     child["assembly_sources"][0]["slash_mode"] = json!("divide");
     let c = p.config(child);
-    assert_eq!(c.assembly_sources[0].options.slash_mode, SlashMode::Divide);
+    assert_eq!(
+        c.assembly_sources[0].options.slash_mode,
+        Some(SlashMode::Divide)
+    );
     assert!(c.rules["a"].origin.path.ends_with("base.json"));
 }
 
@@ -297,7 +304,7 @@ fn options() -> Options {
     Options {
         profile: Profile::X86GasAtt32,
         preprocessing: Preprocessing::None,
-        slash_mode: SlashMode::GasDefault,
+        slash_mode: Some(SlashMode::GasDefault),
     }
 }
 #[test]
@@ -347,7 +354,7 @@ fn x86_literals_and_slash_modes_reject_unsupported_forms_without_fallback() {
         assert!(tokenize(source, options()).is_err(), "{source:?}");
     }
     let mut divide = options();
-    divide.slash_mode = SlashMode::Divide;
+    divide.slash_mode = Some(SlashMode::Divide);
     assert!(tokenize("nop // comment", divide).is_err());
     assert_eq!(
         tokenize("nop / comment", options())
