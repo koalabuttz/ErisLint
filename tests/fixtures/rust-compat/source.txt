@@ -1,0 +1,20 @@
+// Fork fixture: SPDX-License-Identifier: AGPL-3.0-only
+mod nested {
+    /// Struct docs.
+    pub struct Pair<T>(pub T, u8);
+    enum Choice { Unit, Named { value: u8 }, Code = 2 }
+    trait Read: Sized { fn read(&self); }
+    impl<T> Pair<T> {
+        /// Function docs.
+        #[inline]
+        pub unsafe fn résumé<U>(&mut self, (a, b): (U, U)) -> U where U: Copy {
+            // Preserve body comments.
+            fn inner() {}
+            a
+        }
+    }
+}
+mod external;
+/* 🦀 */ const fn café() -> u8 { 1 }
+macro_rules! generated { () => { fn hidden() {} } }
+#[cfg(any())] async fn visible() {}

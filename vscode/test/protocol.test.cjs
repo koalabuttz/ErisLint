@@ -9,6 +9,31 @@ const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { editorOffset, functionsIn, hoverMarkdown, runCli } = require('../out/protocol');
 
+// Fork-specific compatibility coverage; preserve upstream protocol behavior.
+test('frozen Rust name and node spans map to UTF-16 with non-BMP prefixes', () => {
+  const { readFileSync } = require('node:fs');
+  const folder = path.join(__dirname, '../../tests/fixtures/rust-compat');
+  const text = readFileSync(path.join(folder, 'source.txt'), 'utf8');
+  const plan = JSON.parse(readFileSync(path.join(folder, 'disk.json'), 'utf8'));
+  const functions = functionsIn(plan);
+  const target = functions.find(item => item.target === 'café');
+  assert.ok(target);
+  const nameStart = text.indexOf('café');
+  assert.equal(editorOffset(text, target.location.start), nameStart);
+  assert.equal(editorOffset(text, target.location.end), nameStart + 'café'.length);
+  assert.equal(text.slice(editorOffset(text, target.range.start), editorOffset(text, target.range.end)), '/* 🦀 */ const fn café() -> u8 { 1 }');
+  assert.equal(Object.keys(target.request.questions).length, 4);
+  // Check every code-point boundary, including CRLF and surrogate pairs.
+  let bytes = 0;
+  let utf16 = 0;
+  for (const point of text) {
+    assert.equal(editorOffset(text, bytes), utf16);
+    bytes += Buffer.byteLength(point);
+    utf16 += point.length;
+  }
+  assert.equal(editorOffset(text, bytes), text.length);
+});
+
 test('converts Rust byte offsets to VS Code UTF-16 offsets', () => {
   const text = '// 🦀\r\nfn café() {}';
   const start = Buffer.byteLength(text.slice(0, text.indexOf('café')));
