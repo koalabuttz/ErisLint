@@ -46,7 +46,7 @@ fn version() -> u32 {
     1
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema)]
 pub enum RustEdition {
     #[serde(rename = "2015")]
     E2015,

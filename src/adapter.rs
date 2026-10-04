@@ -15,7 +15,7 @@ use crate::{
     source::{Target, TargetKind},
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Adapter {
     Rust,
 }

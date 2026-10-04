@@ -131,7 +131,7 @@ impl Plan {
             "no Rust source files matched the configured paths"
         );
         let mut evaluations = Vec::new();
-        let mut editions = BTreeMap::new();
+        let mut parsers = BTreeMap::new();
         let mut sources = BTreeMap::new();
         for (path, adapter) in &files {
             let source = fs::read_to_string(path)
@@ -143,7 +143,9 @@ impl Plan {
                     .parent()
                     .context("source file has no parent")?
                     .to_path_buf();
-                match editions.entry(directory) {
+                // A directory may contain several languages. Explicit edition
+                // overrides still bypass discovery as before.
+                match parsers.entry((directory, *adapter, config.edition)) {
                     std::collections::btree_map::Entry::Occupied(entry) => *entry.get(),
                     std::collections::btree_map::Entry::Vacant(entry) => {
                         *entry.insert(adapter.prepare(path, None)?)
