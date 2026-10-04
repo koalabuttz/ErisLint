@@ -587,3 +587,157 @@ fn mixed_v3_cache_selection_filtering_and_unsaved_sources_are_separate() {
     let c = p.config(v);
     assert!(Plan::build(&c, &[]).is_err());
 }
+
+#[test]
+fn x86_request_snapshots_cover_both_targets_in_all_context_modes() {
+    let p = Project::new();
+    p.write("review.S", include_str!("../examples/assembly/review.S"));
+    p.write(
+        "erislint.json",
+        include_str!("../examples/assembly/erislint.json"),
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_erislint"))
+        .current_dir(p.root())
+        .env_remove("jev_key")
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        output.stdout,
+        include_bytes!("fixtures/assembly-x86-requests.json")
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let es = value["evaluations"].as_array().unwrap();
+    assert_eq!(es.len(), 6);
+    let analysis = &es[0]["request"]["state"]["analysis"];
+    for e in es {
+        assert_eq!(&e["request"]["state"]["analysis"], analysis);
+        assert_eq!(e["request"]["questions"].as_object().unwrap().len(), 1);
+    }
+}
+#[test]
+fn v3_schema_bytes_match_checked_in_files_without_widening_legacy_schemas() {
+    for (kind, expected) in [
+        (
+            "config-v3",
+            include_bytes!("../erislint-v3.schema.json").as_slice(),
+        ),
+        (
+            "rule-v3",
+            include_bytes!("../erislint-rule-v3.schema.json").as_slice(),
+        ),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_erislint"))
+            .args(["--schema", kind])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        assert_eq!(out.stdout, expected);
+    }
+}
+#[test]
+fn ignored_and_invalid_paths_use_global_scope_before_assembly_validation() {
+    let p = Project::new();
+    let good = p.write("src/good.s", "nop");
+    let bad = p.write("src/ignored.txt", ".code64");
+    let mut v = config(vec![asm_rule("a", "file")]);
+    v["assembly_sources"][0]["files"] = json!(["src/**"]);
+    v["include"] = json!(["src/**"]);
+    v["exclude"] = json!(["src/ignored.txt"]);
+    let c = p.config(v.clone());
+    assert_eq!(Plan::build(&c, &[bad.clone(), good]).unwrap().files, 1);
+    assert!(
+        Plan::from_source(&c, &bad, ".code64")
+            .unwrap()
+            .evaluations
+            .is_empty()
+    );
+    assert!(
+        error(Plan::from_source(&c, &p.root().join("src/missing.txt"), ""))
+            .contains("cannot open input")
+    );
+    v["exclude"] = json!([]);
+    let c = p.config(v);
+    assert!(error(Plan::build(&c, &[])).contains("unsupported extension"));
+    assert!(error(Plan::from_source(&c, &bad, "nop")).contains("unsupported extension"));
+    let outside_project = Project::new();
+    let outside = outside_project.write("out.s", "nop");
+    assert!(Plan::from_source(&c, &outside, "nop").is_err());
+}
+#[test]
+fn overlapping_assembly_selections_and_foreign_languages_are_rejected() {
+    let p = Project::new();
+    p.write("a.s", "nop");
+    let mut v = config(vec![asm_rule("a", "file")]);
+    let entry = v["assembly_sources"][0].clone();
+    v["assembly_sources"].as_array_mut().unwrap().push(entry);
+    let c = p.config(v);
+    assert!(error(Plan::build(&c, &[])).contains("multiple assembly"));
+    let mut cr = rule("c");
+    cr["where"]["language"] = json!("c");
+    let mut v = config(vec![asm_rule("a", "file"), cr]);
+    v["c_files"] = json!(["**/*.s"]);
+    let c = p.config(v);
+    assert!(error(Plan::build(&c, &[])).contains("another language"));
+}
+#[test]
+fn cpp_and_macro_structure_prevents_fake_markers_and_unknown_state_leaks() {
+    let mut cpp = options();
+    cpp.preprocessing = Preprocessing::CppUnexpanded;
+    for text in [
+        "#if 0\n.code64\n#endif\n",
+        ".irp p,a\n.altmacro\n.endr\n",
+        ".if 0\n#APP\n.endif\n",
+        ".code16gcc\n",
+    ] {
+        assert!(tokenize(text, cpp).is_err());
+    }
+    let source = ".rept 2\n# erislint-region-begin hidden\n.endr\n#if FLAG\n# erislint-region-begin r\nnop\n#endif\n# erislint-region-end r\n";
+    let t = assembly::extract(source, cpp, &BTreeSet::from([TargetKind::AssemblyRegion])).unwrap();
+    assert_eq!(t.len(), 1);
+    let state = t[0].input(InputContext::Target, source);
+    assert!(
+        state["analysis"]["dependencies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["kind"] == "conditional_body")
+    );
+    assert!(tokenize(".ascii \"\\'\"", options()).is_err());
+}
+#[test]
+fn cli_unsaved_assembly_snapshot_never_writes_or_requires_credentials() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let p = Project::new();
+    let path = p.write("a.s", "nop\n");
+    p.write("Cargo.toml", "not TOML");
+    p.config(config(vec![asm_rule("a", "file")]));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_erislint"))
+        .current_dir(p.root())
+        .env_remove("jev_key")
+        .args(["--stdin-file", "a.s", "--dry-run"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all("# é\r\n.byte 'A\r\n".as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        value["evaluations"][0]["request"]["state"]["source"],
+        "# é\r\n.byte 'A\r\n"
+    );
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "nop\n");
+}
