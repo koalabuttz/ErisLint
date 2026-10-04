@@ -4,7 +4,7 @@
 
 //! Frozen version-1 schema types; the fork's version-2 additions live in config.
 use super::{InputContext, Override, RustEdition};
-use crate::{jev::Question, policy::DiagnosticPolicy, source::TargetKind};
+use crate::{jev::Question, policy::DiagnosticPolicy};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -80,4 +80,17 @@ impl<'de> Deserialize<'de> for RuleFile {
         };
         rules.map_err(serde::de::Error::custom)
     }
+}
+
+// Frozen independently so new language targets cannot widen version 1.
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetKind {
+    Function,
+    Struct,
+    Enum,
+    Trait,
+    Impl,
+    Module,
+    File,
 }

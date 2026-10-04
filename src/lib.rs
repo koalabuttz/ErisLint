@@ -9,6 +9,7 @@ pub mod config;
 pub mod jev;
 pub mod output;
 pub mod policy;
+pub mod python;
 pub mod runner;
 pub mod rust;
 pub mod source;

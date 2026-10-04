@@ -411,7 +411,8 @@
         "trait",
         "impl",
         "module",
-        "file"
+        "file",
+        "class"
       ]
     }
   }

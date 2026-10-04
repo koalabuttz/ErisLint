@@ -22,6 +22,7 @@ pub enum TargetKind {
     Impl,
     Module,
     File,
+    Class,
 }
 
 /// Byte offsets are zero-based, end-exclusive. Lines and Unicode columns are one-based.

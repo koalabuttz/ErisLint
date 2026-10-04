@@ -430,6 +430,10 @@ fn validate_rule(rule: &Rule) -> Result<()> {
             || matches!(rule.r#where.kind, TargetKind::Function | TargetKind::File),
         "C supports only function and file targets"
     );
+    ensure!(
+        rule.r#where.kind != TargetKind::Class,
+        "class targets require the Python adapter"
+    );
     rule.question.validate()?;
     ensure!(
         !rule.diagnostics.is_empty(),
