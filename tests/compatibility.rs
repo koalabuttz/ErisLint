@@ -321,3 +321,88 @@ fn malformed_source_has_identical_disk_and_editor_failure() {
             .starts_with("erislint: cannot parse source.rs: Rust syntax errors:\n")
     );
 }
+
+#[test]
+fn multiple_directories_keep_independent_editions_and_sorted_unique_inputs() {
+    let project = Project::new();
+    let config = project.config(json!({"rules": [rule("quality")]}));
+    let mut paths = Vec::new();
+    for (directory, edition, source) in [
+        ("a", "2015", "fn async() {}"),
+        ("b", "2021", "fn gen() {}"),
+        ("c", "2024", "fn r#gen() {}"),
+    ] {
+        project.write(
+            &format!("{directory}/Cargo.toml"),
+            format!("[package]\nname = '{directory}'\nversion = '0.0.0'\nedition = '{edition}'\n"),
+        );
+        paths.push(project.write(&format!("{directory}/one.rs"), source));
+        paths.push(project.write(&format!("{directory}/two.rs"), source));
+    }
+    let scan = Plan::build(&config, &[]).unwrap();
+    assert_eq!(scan.files, 6);
+    let expected = serde_json::to_vec(&scan).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&Plan::build(&config, &paths).unwrap()).unwrap(),
+        expected
+    );
+    paths.reverse();
+    paths.extend(paths.clone());
+    assert_eq!(
+        serde_json::to_vec(&Plan::build(&config, &paths).unwrap()).unwrap(),
+        expected
+    );
+    for evaluation in &scan.evaluations {
+        let path = project.root().join(&evaluation.location.file);
+        let source = std::fs::read_to_string(&path).unwrap();
+        let editor = Plan::from_source(&config, &path, &source).unwrap();
+        assert_eq!(
+            serde_json::to_value(&editor.evaluations[0]).unwrap(),
+            serde_json::to_value(evaluation).unwrap()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_inputs_keep_canonical_extension_and_containment_semantics() {
+    use std::os::unix::fs::symlink;
+    let project = Project::new();
+    let config = project.config(json!({"rules": [rule("quality")]}));
+    let real = project.write("real.rs", "fn real() {}");
+    let text = project.write("text.txt", "fn text() {}");
+    let alias_text = project.root().join("alias.txt");
+    let alias_rust = project.root().join("alias.rs");
+    symlink(&real, &alias_text).unwrap();
+    symlink(&text, &alias_rust).unwrap();
+    assert_eq!(Plan::build(&config, &[]).unwrap().files, 1);
+    let plan = Plan::build(&config, &[alias_text.clone(), real]).unwrap();
+    assert_eq!(plan.files, 1);
+    assert_eq!(plan.evaluations[0].location.file.to_str(), Some("real.rs"));
+    assert_eq!(
+        Plan::from_source(&config, &alias_text, "fn unsaved() {}")
+            .unwrap()
+            .evaluations[0]
+            .target,
+        "unsaved"
+    );
+    assert_eq!(
+        error(Plan::build(&config, std::slice::from_ref(&alias_rust))),
+        "no Rust source files matched the configured paths"
+    );
+    assert_eq!(
+        error(Plan::from_source(&config, &alias_rust, "")),
+        "editor input must be a Rust file"
+    );
+    let outside = Project::new();
+    let escape = project.root().join("escape.rs");
+    symlink(outside.write("outside.rs", "fn outside() {}"), &escape).unwrap();
+    assert!(
+        error(Plan::build(&config, std::slice::from_ref(&escape)))
+            .contains("outside configuration directory")
+    );
+    assert_eq!(
+        error(Plan::from_source(&config, &escape, "")),
+        "input is outside the configuration directory: prefix not found"
+    );
+}
