@@ -177,3 +177,16 @@ fn v3_imports_validate_explicit_version_not_schema_hint() {
         assert!(Config::load(&p.json("erislint.json", &v)).is_err());
     }
 }
+
+#[test]
+fn shared_source_records_preserve_crlf_unicode_and_empty_file_spans() {
+    use erislint::assembly::text::Text;
+    let source = "  # erislint-region-begin r\r\n\t.byte \"é\"\r\n  # erislint-region-end r\r\n";
+    let text = Text::new(source);
+    let span = text.span(37, 39);
+    assert_eq!((span.line, span.column, span.end_column), (2, 9, 10));
+    assert_eq!(text.record("region", 29, 42).source, "\t.byte \"é\"\r\n");
+    assert_eq!(text.record("file", 0, source.len()).source, source);
+    let empty = Text::new("").span(0, 0);
+    assert_eq!((empty.line, empty.column, empty.end), (1, 1, 0));
+}

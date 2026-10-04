@@ -4,6 +4,7 @@
 
 mod adapter;
 
+pub mod assembly;
 pub mod c;
 pub mod config;
 pub mod jev;
