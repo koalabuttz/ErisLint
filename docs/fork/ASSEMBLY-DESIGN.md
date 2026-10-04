@@ -2,6 +2,10 @@
 
 # Assembly source-review proposal
 
+Implementation status: the reviewed proposal below is retained as design history.
+See the [x86 checkpoint](ASSEMBLY-X86-CHECKPOINT.md) and the subsequent
+[bounded MOS checkpoint](ASSEMBLY-MOS-CHECKPOINT.md) for implemented scope and evidence.
+
 Status: design for review, not implemented. This extends Eriskii's ErisLint through
 one shared assembly layer and two explicit profiles. Preserve upstream credit,
 license, history and Rust/C/Python behavior. No private project sources, artifacts,

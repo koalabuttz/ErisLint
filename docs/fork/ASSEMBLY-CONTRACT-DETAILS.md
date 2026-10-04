@@ -2,6 +2,11 @@
 
 # Assembly contract decisions after review
 
+Implementation status: the contract below now governs both bounded profiles.
+See the [x86 checkpoint](ASSEMBLY-X86-CHECKPOINT.md) and
+[MOS checkpoint](ASSEMBLY-MOS-CHECKPOINT.md) for executed verification; historical
+proposal wording below is retained as the reviewed decision record.
+
 Normative proposal, not implemented. This refines [the design](ASSEMBLY-DESIGN.md)
 and takes precedence over its earlier open questions. No parser, assembler or
 provider was run. All fixtures below are planned acceptance tests.

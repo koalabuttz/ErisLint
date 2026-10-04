@@ -2,6 +2,11 @@
 
 # Proposed assembly fixture matrix
 
+Execution status: the historical gates below are mapped to implemented tests in
+the [x86 checkpoint](ASSEMBLY-X86-CHECKPOINT.md) and
+[MOS checkpoint](ASSEMBLY-MOS-CHECKPOINT.md). The latter covers both-profile
+request snapshots and offline mock CLI warning/display checks.
+
 Status: planned tests, not executed fixtures or support claims. Author tiny original
 samples from the public dialect references in [the design](ASSEMBLY-DESIGN.md).
 Do not import private sources, generated assembly, symbols, addresses or build

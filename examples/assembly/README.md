@@ -59,5 +59,6 @@ Version 3 can inherit older configs and use explicit rule imports such as
 version; `$schema` does not override validation. Version 1/2 documents cannot
 inherit version 3. Existing language defaults and schemas remain unchanged.
 
-LLVM-MOS, embedded Rust assembly, instruction validation, symbol resolution,
-linking, execution and VS Code assembly activation are outside this milestone.
+The separate [LLVM-MOS example](../assembly-mos/README.md) uses its own profile.
+Embedded Rust assembly, instruction validation, symbol resolution, linking,
+execution and VS Code assembly activation remain outside these milestones.

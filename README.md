@@ -399,7 +399,10 @@ with explicit preprocessing and slash modes, file targets and marked regions.
 See the [assembly example](examples/assembly/README.md) and
 [implementation checkpoint](docs/fork/ASSEMBLY-X86-CHECKPOINT.md). This preserves
 source and unresolved context; it does not validate instructions or execute an
-assembler/preprocessor. LLVM-MOS remains unimplemented. Generate the new schemas
+assembler/preprocessor. The additional `mos-llvm-c64` profile supports bounded
+LLVM-MOS generic syntax with C64/6510 intent and no validated CPU features; see
+the [MOS example](examples/assembly-mos/README.md) and
+[checkpoint](docs/fork/ASSEMBLY-MOS-CHECKPOINT.md). Generate the new schemas
 with `--schema config-v3` and `--schema rule-v3`; older schemas remain unchanged.
 
 ## License
