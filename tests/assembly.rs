@@ -190,3 +190,205 @@ fn shared_source_records_preserve_crlf_unicode_and_empty_file_spans() {
     let empty = Text::new("").span(0, 0);
     assert_eq!((empty.line, empty.column, empty.end), (1, 1, 0));
 }
+
+use erislint::{
+    assembly::lexer::tokenize,
+    config::assembly::{Options, Preprocessing, SlashMode},
+};
+fn options() -> Options {
+    Options {
+        profile: Profile::X86GasAtt32,
+        preprocessing: Preprocessing::None,
+        slash_mode: SlashMode::GasDefault,
+    }
+}
+#[test]
+fn x86_lexical_records_cover_every_original_byte_without_interpreting_operands() {
+    let source = ".code32\r\n1: movl $1,4(%eax,%ecx,4); jmp 1b # é\r\n.ascii \"#;/*not comments*/\\\"\"\r\n.byte 'A, '\\n, '#\r\nname/*x*/suffix\n";
+    let p = tokenize(source, options()).unwrap();
+    assert_eq!(
+        p.records.iter().map(|r| r.source).collect::<String>(),
+        source
+    );
+    let mut offset = 0;
+    for r in &p.records {
+        assert_eq!(r.span.start, offset);
+        assert_eq!(&source[r.span.start..r.span.end], r.source);
+        offset = r.span.end;
+    }
+    assert_eq!(offset, source.len());
+    assert_eq!(p.statements.iter().filter(|s| s.kind == "label").count(), 1);
+    assert!(
+        p.records
+            .iter()
+            .any(|r| r.kind == "character" && r.source == "'#")
+    );
+    assert!(
+        p.statements
+            .iter()
+            .any(|r| r.kind == "opaque_statement" && r.source == "jmp 1b")
+    );
+}
+#[test]
+fn x86_literals_and_slash_modes_reject_unsupported_forms_without_fallback() {
+    for source in [
+        ".byte 'A'",
+        ".byte 'é",
+        ".byte '",
+        ".byte '\n",
+        ".byte '\r\n",
+        ".byte '\\q",
+        ".ascii \"x\\q\"",
+        ".ascii \"x\n\"",
+        ".ascii \"x\\\ny\"",
+        ".ascii \"missing",
+        "/*missing",
+        "*/",
+        "nop\rnext",
+    ] {
+        assert!(tokenize(source, options()).is_err(), "{source:?}");
+    }
+    let mut divide = options();
+    divide.slash_mode = SlashMode::Divide;
+    assert!(tokenize("nop // comment", divide).is_err());
+    assert_eq!(
+        tokenize("nop / comment", options())
+            .unwrap()
+            .records
+            .last()
+            .unwrap()
+            .kind,
+        "comment"
+    );
+    assert!(
+        tokenize("value = 4/2\n", divide)
+            .unwrap()
+            .records
+            .iter()
+            .any(|r| r.source == "/" && r.kind == "punctuation")
+    );
+    for source in [
+        ".byte 'A",
+        ".byte '\\n",
+        ".byte '\\'",
+        ".byte '\\\\",
+        ".ascii \"é\\\"\"",
+        "movl $1, %eax /* note */\n",
+    ] {
+        tokenize(source, options()).unwrap();
+    }
+}
+#[test]
+fn cpp_continuations_precede_macros_state_controls_literals_and_markers() {
+    let source = "#define BODY \\\n .macro hidden \\\n .intel_syntax noprefix \\\n #APP \\\n # erislint-region-begin fake\n.code32\n";
+    let mut cpp = options();
+    cpp.preprocessing = Preprocessing::CppUnexpanded;
+    for input in [source.to_owned(), source.replace('\n', "\r\n")] {
+        let p = tokenize(&input, cpp).unwrap();
+        assert_eq!(p.records.iter().filter(|r| r.kind == "cpp").count(), 1);
+        assert!(p.regions.is_empty());
+        assert_eq!(
+            p.records.iter().map(|r| r.source).collect::<String>(),
+            input
+        );
+    }
+    assert!(error(tokenize(source, options())).contains("preprocessing_mode_required"));
+    for source in [
+        "#define X \\",
+        "#define X \\\n",
+        "#define X 1\n.intel_syntax noprefix\n",
+    ] {
+        assert!(tokenize(source, cpp).is_err());
+    }
+    tokenize("/* #define x \\\n .intel_syntax */\n", options()).unwrap();
+}
+#[test]
+fn structural_states_are_balanced_and_unsupported_controls_fail_even_when_inactive() {
+    let source = ".macro outer p\n.irp n,a,b\n.irpc c,ab\n.rept 2\n.byte \\p\n.endr\n.endr\n.endr\n.endm\n.if 0\nunknown_call\n.else\nother\n.endif\n";
+    let p = tokenize(source, options()).unwrap();
+    assert!(p.dependencies.iter().any(|r| r.kind == "macro_body"));
+    assert_eq!(
+        p.dependencies
+            .iter()
+            .filter(|r| r.kind == "repetition_body")
+            .count(),
+        3
+    );
+    for bad in [
+        ".endm",
+        ".macro",
+        ".macro m\n",
+        ".rept 2\n.endm",
+        ".macro a\n.macro b\n.endm\n.endm",
+        ".ifc a,b\n.endif",
+        ".if 0\n.else\n.else\n.endif",
+    ] {
+        assert!(tokenize(bad, options()).is_err(), "{bad}");
+    }
+    for directive in [
+        ".code16",
+        ".code64",
+        ".intel_syntax",
+        ".altmacro",
+        ".noaltmacro",
+        ".cpu",
+        ".syntax",
+    ] {
+        for source in [
+            format!("{directive}\n"),
+            format!(".macro m\n{directive}\n.endm\n"),
+            format!(".if 0\n{directive}\n.endif\n"),
+        ] {
+            assert!(tokenize(&source, options()).is_err());
+        }
+    }
+    for control in ["#APP", "  #NO_APP\r\n", ".macro m\n#APP\n.endm\n"] {
+        assert!(tokenize(control, options()).is_err());
+    }
+    tokenize("#APP extra\n.ascii \"#NO_APP\"\n# note #APP\n", options()).unwrap();
+}
+#[test]
+fn region_markers_have_exact_ranges_and_ignore_inert_comment_or_macro_text() {
+    let source = "  # erislint-region-begin r\r\n\t.byte \"é\"\r\n  # erislint-region-end r\r\n";
+    let p = tokenize(source, options()).unwrap();
+    let r = &p.regions[0];
+    assert_eq!((r.body.span.start, r.body.span.end), (29, 42));
+    assert_eq!((r.name_span.start, r.name_span.end), (26, 27));
+    assert_eq!(
+        (r.begin_comment.span.start, r.begin_comment.span.end),
+        (2, 27)
+    );
+    assert_eq!((r.end_line.span.start, r.end_line.span.end), (42, 69));
+    let inert = "/*\n# erislint-region-begin fake\n*/\n.ascii \"# erislint-region-end fake\"\n.macro m\n# erislint-region-begin inside\n.endm\nnop # erislint-region-end inline\n#erislint-region-begin nospace\n";
+    assert!(tokenize(inert, options()).unwrap().regions.is_empty());
+    let eof = source.trim_end_matches("\r\n");
+    assert_eq!(
+        tokenize(eof, options()).unwrap().regions[0]
+            .end_line
+            .span
+            .end,
+        67
+    );
+}
+#[test]
+fn malformed_empty_nested_and_duplicate_regions_are_operational_errors() {
+    for name in ["", "1bad", "é", "bad/name", "two names", &"a".repeat(65)] {
+        let source = format!("# erislint-region-begin {name}\nnop\n# erislint-region-end {name}\n");
+        assert!(tokenize(&source, options()).is_err(), "{name}");
+    }
+    for body in ["", " \t\r\n", "\u{2003}\n"] {
+        let source = format!("# erislint-region-begin r\n{body}# erislint-region-end r\n");
+        assert!(tokenize(&source, options()).is_err());
+    }
+    for source in [
+        "# erislint-region-begin r",
+        "# erislint-region-end r\n",
+        "# erislint-region-begin r\nnop\n# erislint-region-end x\n",
+        "# erislint-region-begin r\n# erislint-region-begin x\n",
+    ] {
+        assert!(tokenize(source, options()).is_err());
+    }
+    let good = "# erislint-region-begin _r.1-a\n# comment only\n# erislint-region-end _r.1-a\n";
+    tokenize(good, options()).unwrap();
+    assert!(tokenize(&good.repeat(2), options()).is_err());
+}
