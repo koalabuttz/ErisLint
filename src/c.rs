@@ -200,11 +200,19 @@ fn target(
         TargetKind::File
     };
     let label = name.map_or("<file>", |name| &source[name.byte_range()]);
+    // The grammar root may omit leading whitespace, including the entire input
+    // for a whitespace-only file. A file target always covers the supplied bytes.
+    let range = if kind == TargetKind::File {
+        positions.range(0, source.len())
+    } else {
+        positions.span(node)
+    };
+    let span = name.map_or_else(|| range.clone(), |name| positions.span(name));
     let body = node.child_by_field_name("body");
     let text = |node: Option<Node<'_>>| node.map(|node| &source[node.byte_range()]);
     let mut state = json!({
         "language": "c", "kind": kind, "name": name.map(|_| label),
-        "source": &source[node.byte_range()],
+        "source": &source[range.start..range.end],
         "comments": comments, "preprocessor": preprocessor,
         "analysis": {
             "completeness": "incomplete",
@@ -233,8 +241,8 @@ fn target(
     Target::new(
         kind,
         label.to_owned(),
-        positions.span(name.unwrap_or(node)),
-        positions.span(node),
+        span,
+        range,
         body.is_some(),
         state,
         enclosing,
@@ -265,8 +273,10 @@ impl<'a> Positions<'a> {
     }
 
     fn span(&self, node: Node<'_>) -> Span {
-        let start = node.start_byte();
-        let end = node.end_byte();
+        self.range(node.start_byte(), node.end_byte())
+    }
+
+    fn range(&self, start: usize, end: usize) -> Span {
         let (line, column) = self.point(start);
         let (end_line, end_column) = self.point(end);
         Span {

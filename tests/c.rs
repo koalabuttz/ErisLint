@@ -481,3 +481,52 @@ fn parameter_context_does_not_hide_file_or_block_function_declarations() {
         "function_definition"
     );
 }
+
+#[test]
+fn file_targets_cover_original_prefix_and_whitespace_only_input() {
+    for source in [
+        "\n  int x;\n",
+        " \t\r\n \t",
+        "",
+        " \n /* 🦀 */\r\n int x;\n",
+    ] {
+        let targets = c::extract(source, &BTreeSet::from([TargetKind::File])).unwrap();
+        assert_eq!(targets.len(), 1);
+        let target = &targets[0];
+        for span in [&target.span, &target.range] {
+            assert_eq!((span.start, span.end), (0, source.len()), "{source:?}");
+            assert_eq!((span.line, span.column), (1, 1));
+            assert_eq!(
+                span.end_line,
+                source.bytes().filter(|&byte| byte == b'\n').count() + 1
+            );
+            assert_eq!(
+                span.end_column,
+                source.rsplit('\n').next().unwrap().chars().count() + 1
+            );
+        }
+        let state = target.input(InputContext::File, source);
+        assert_eq!(state["source"], source);
+        assert_eq!(state["context"]["file"], source);
+    }
+}
+
+#[test]
+fn editor_file_target_uses_complete_unsaved_source_and_span() {
+    let project = Project::new();
+    let path = project.write("snapshot.c", "int saved;");
+    let config = project.config(config(vec![c_rule("file", "file")]));
+    let source = "\n  int unsaved;\n";
+    let plan = Plan::from_source(&config, &path, source).unwrap();
+    let evaluation = &plan.evaluations[0];
+    assert_eq!(evaluation.request.state["source"], source);
+    assert_eq!(
+        (evaluation.location.span.start, evaluation.range.end),
+        (0, source.len())
+    );
+    assert_eq!(
+        plan.source(std::path::Path::new("snapshot.c")),
+        Some(source)
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "int saved;");
+}
